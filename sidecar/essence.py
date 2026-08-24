@@ -101,6 +101,21 @@ def _resize_working(img: Image.Image) -> Image.Image:
     return img.resize((max(w, 8), max(h, 8)))
 
 
+PREVIEW_MAX_DIM = 1600  # generous — this is a display preview, not the working-resolution copy used for generation
+
+
+def preview_data_url(image_path: str) -> str:
+    """Decodes any Pillow-openable image (including HEIC/HEIF via paths.py's
+    pillow-heif registration) and re-encodes it as a PNG data: URL. Exists
+    for electron/main.js's image:readAsDataUrl to call for formats Chromium
+    has no <img> codec for at all (HEIC/HEIF) or won't reliably display from
+    a data: URL (TIFF) — see that handler's BROWSER_DISPLAYABLE_EXTENSIONS.
+    """
+    img = Image.open(image_path).convert("RGB")
+    img.thumbnail((PREVIEW_MAX_DIM, PREVIEW_MAX_DIM))
+    return _to_data_url(img)
+
+
 def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
     src = Image.open(reference_image_path)
     dominant = _dominant_color(src)

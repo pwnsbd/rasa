@@ -164,15 +164,39 @@ ipcMain.handle('sidecar:call', async (_event, { method = 'GET', path, body } = {
 
 ipcMain.handle('sidecar:baseUrl', () => `http://127.0.0.1:${sidecarPort}`);
 
+// Formats Chromium's <img> can decode directly from a data: URL. Anything
+// else (HEIC/HEIF — no browser codec at all; TIFF — Chromium won't display
+// it even though it'll happily <img> a raw file:// one on some platforms)
+// needs to go through the sidecar's Pillow-based decoder instead, since
+// Electron's main process has no image codec of its own.
+const BROWSER_DISPLAYABLE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif']);
+
 // Reads a local image file and returns it as a data: URL. The renderer is
 // served from http://localhost:5173 in dev (a different origin from
 // file://), and Chromium's cross-origin restrictions block <img src="file://...">
 // from an http(s) page — so local images picked via the native dialog or
 // drag-and-drop are routed through here rather than as file:// URLs.
 ipcMain.handle('image:readAsDataUrl', async (_event, filePath) => {
-  const buf = await fs.promises.readFile(filePath);
   const ext = path.extname(filePath).slice(1).toLowerCase();
-  const mime = ext === 'jpg' ? 'jpeg' : ext || 'png';
+
+  if (!BROWSER_DISPLAYABLE_EXTENSIONS.has(ext)) {
+    // HEIC/HEIF/TIFF/etc — ask the sidecar (pillow-heif-registered Pillow)
+    // to decode and re-encode as a browser-displayable PNG preview.
+    const res = await fetch(`http://127.0.0.1:${sidecarPort}/utils/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image_path: filePath }),
+    });
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({}));
+      throw new Error(detail.detail || `Sidecar could not preview ${ext} image (${res.status})`);
+    }
+    const { data_url } = await res.json();
+    return data_url;
+  }
+
+  const buf = await fs.promises.readFile(filePath);
+  const mime = ext === 'jpg' ? 'jpeg' : ext;
   return `data:image/${mime};base64,${buf.toString('base64')}`;
 });
 
@@ -180,7 +204,7 @@ ipcMain.handle('dialog:openImage', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose an image',
     properties: ['openFile'],
-    filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
+    filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'bmp', 'gif', 'tif', 'tiff'] }],
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];

@@ -5,6 +5,15 @@ spawns the sidecar; falls back to a local ./tmp-devdata for standalone runs
 import os
 from pathlib import Path
 
+import pillow_heif
+
+# Registered once, here, since paths.py is the first shared module every
+# other one imports (essence.py, media.py, app.py) — makes PIL.Image.open
+# transparently handle .heic/.heif everywhere without each call site
+# needing to know about it. HEIC has no royalty-free codec, so this can't
+# be Pillow's own built-in behavior; pillow-heif wraps libheif for it.
+pillow_heif.register_heif_opener()
+
 _DEFAULT_ROOT = Path(__file__).parent / "tmp-devdata"
 
 

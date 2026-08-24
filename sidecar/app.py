@@ -62,6 +62,23 @@ def models_status():
     return pipeline_manager.status()
 
 
+class PreviewRequest(BaseModel):
+    image_path: str
+
+
+@app.post("/utils/preview")
+def preview_endpoint(req: PreviewRequest):
+    # Pure decode/re-encode, no model involved — deliberately does not call
+    # _require_model_ready() below, so HEIC/TIFF previews still work while
+    # the style model is still downloading/loading.
+    try:
+        return {"data_url": essence.preview_data_url(req.image_path)}
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail=f"Image not found: {req.image_path}")
+    except Exception as e:  # noqa: BLE001 — surface any Pillow/decoding failure as a 400, not a 500 stack trace
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class ExtractRequest(BaseModel):
     image_path: str
     name: str | None = None

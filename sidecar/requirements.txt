@@ -4,6 +4,7 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 pillow==11.0.0
+pillow-heif==0.20.0  # HEIC/HEIF support (iPhone photos) — Pillow has no built-in codec for it
 numpy==2.1.3
 
 # Real style-extraction/generation pipeline (spec §2.2): SDXL base +

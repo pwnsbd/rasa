@@ -45,6 +45,8 @@ All four zones (Main Stage, Distillation Room, Media Page, Settings) are wired u
 
 First run downloads ~11.5GB (SDXL base + IP-Adapter + its CLIP image encoder + Tile ControlNet + the fp16-fix VAE) into `<models-dir>/hf-cache` (see the `RASA_MODELS_DIR` note above), in the background from sidecar startup — `GET /models/status` and the in-app banner/Settings screen show progress. Extraction and application both fail fast with a 503 until it's ready, rather than hanging.
 
+**Image formats**: PNG, JPEG, WebP, HEIC/HEIF (iPhone photos, via `pillow-heif`), BMP, GIF, and TIFF are all accepted, both as reference/target images and for display. HEIC and TIFF specifically have no Chromium `<img>` codec at all, so previewing them (not just processing them) routes through a new `POST /utils/preview` sidecar endpoint that decodes via Pillow and re-encodes as a displayable PNG — see `electron/main.js`'s `image:readAsDataUrl` handler. That endpoint doesn't require the style model to be loaded, so previews work even during the first-run download.
+
 Not yet built: progressive per-diffusion-step previews (the Main Stage crossfade currently animates original → final rather than several real intermediate frames), provenance metadata embedding + export (spec §3), and the future style marketplace (deferred beyond v1 per spec §7).
 
 ### Verifying it runs
