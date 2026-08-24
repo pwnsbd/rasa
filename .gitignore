@@ -28,6 +28,9 @@ sidecar/models/
 .DS_Store
 Thumbs.db
 
+# QA screenshots from scripts/verify-launch.mjs / verify-flow.mjs
+.tmp-shots/
+
 # Packaging output
 *.exe
 *.dmg

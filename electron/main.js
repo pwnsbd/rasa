@@ -159,6 +159,18 @@ ipcMain.handle('sidecar:call', async (_event, { method = 'GET', path, body } = {
 
 ipcMain.handle('sidecar:baseUrl', () => `http://127.0.0.1:${sidecarPort}`);
 
+// Reads a local image file and returns it as a data: URL. The renderer is
+// served from http://localhost:5173 in dev (a different origin from
+// file://), and Chromium's cross-origin restrictions block <img src="file://...">
+// from an http(s) page — so local images picked via the native dialog or
+// drag-and-drop are routed through here rather than as file:// URLs.
+ipcMain.handle('image:readAsDataUrl', async (_event, filePath) => {
+  const buf = await fs.promises.readFile(filePath);
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const mime = ext === 'jpg' ? 'jpeg' : ext || 'png';
+  return `data:image/${mime};base64,${buf.toString('base64')}`;
+});
+
 ipcMain.handle('dialog:openImage', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose an image',

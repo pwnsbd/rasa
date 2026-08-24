@@ -30,6 +30,7 @@ export interface AppBridge {
   sidecarCall: <T = unknown>(method: string, path: string, body?: unknown) => Promise<SidecarCallResult<T>>;
   getSidecarBaseUrl: () => Promise<string>;
   openImageDialog: () => Promise<string | null>;
+  readImageAsDataUrl: (filePath: string) => Promise<string>;
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
 }
@@ -37,5 +38,10 @@ export interface AppBridge {
 declare global {
   interface Window {
     appBridge: AppBridge;
+    // Dev-only automation hooks (see MainStage.tsx / DistillationRoom.tsx) so
+    // screens can be driven end-to-end without a real native file dialog or
+    // OS drag event — both unautomatable in a headless/agent test run.
+    // Dead-code-eliminated out of production builds via import.meta.env.DEV.
+    __testHooks?: Record<string, unknown>;
   }
 }

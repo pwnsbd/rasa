@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('appBridge', {
   getSidecarBaseUrl: () => ipcRenderer.invoke('sidecar:baseUrl'),
 
   openImageDialog: () => ipcRenderer.invoke('dialog:openImage'),
+  readImageAsDataUrl: (filePath) => ipcRenderer.invoke('image:readAsDataUrl', filePath),
   // Resolves a dropped File object (from a drag-and-drop event) to its
   // absolute filesystem path — File.path is unavailable on sandboxed
   // renderer File objects; webUtils.getPathForFile is the replacement.

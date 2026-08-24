@@ -1,3 +1,28 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Main Stage thread/particle animation (see MainStage.tsx playThreadAnimation).
+   Positioned via GSAP-driven transform, not left/top, so position:fixed with
+   left/top:0 makes translateX/Y map directly onto viewport clientX/clientY. */
+.thread-particle {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+@keyframes shimmer-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+.shimmer-sweep {
+  animation: shimmer-sweep 1.4s ease-in-out infinite;
+}
