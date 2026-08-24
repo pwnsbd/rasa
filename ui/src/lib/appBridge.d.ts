@@ -10,9 +10,15 @@ export interface GpuInfo {
   warning: string | null;
 }
 
+export interface ModelStatus {
+  state: 'idle' | 'loading' | 'ready' | 'error';
+  detail: string | null;
+}
+
 export interface SidecarHealth {
   ok: boolean;
   gpu: GpuInfo;
+  model: ModelStatus;
   dirs: Record<string, string>;
   error?: string;
 }

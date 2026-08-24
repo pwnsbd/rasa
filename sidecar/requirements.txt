@@ -6,6 +6,11 @@ uvicorn[standard]==0.32.1
 pillow==11.0.0
 numpy==2.1.3
 
-# Added once the real extraction/generation pipeline lands (spec §2.2),
-# replacing sidecar/essence.py's mock-palette technique:
-#   diffusers, transformers, accelerate, safetensors, torch (see above)
+# Real style-extraction/generation pipeline (spec §2.2): SDXL base +
+# InstantStyle IP-Adapter — see sidecar/pipeline_manager.py for why SDXL,
+# not the spec's originally-suggested Flux.
+diffusers==0.31.0
+transformers==4.46.3
+accelerate==1.1.1
+safetensors==0.4.5
+hf_xet==1.6.0

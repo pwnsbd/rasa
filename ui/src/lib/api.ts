@@ -33,6 +33,8 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 export const api = {
   health: () => window.appBridge.getSidecarHealth(),
 
+  modelStatus: () => call<{ state: 'idle' | 'loading' | 'ready' | 'error'; detail: string | null }>('GET', '/models/status'),
+
   extractEssence: (imagePath: string, name?: string) =>
     call<Essence>('POST', '/essences/extract', { image_path: imagePath, name }),
 
@@ -40,8 +42,10 @@ export const api = {
 
   deleteEssence: (essenceId: string) => call<{ ok: true }>('DELETE', `/essences/${essenceId}`),
 
-  applyEssence: (essenceId: string, imagePath: string, steps = 8) =>
-    call<ApplyResult>('POST', '/apply', { essence_id: essenceId, image_path: imagePath, steps }),
+  // steps omitted -> sidecar's own default (tuned for the real diffusion
+  // pipeline in essence.py, not a value the frontend should be guessing at).
+  applyEssence: (essenceId: string, imagePath: string, steps?: number) =>
+    call<ApplyResult>('POST', '/apply', { essence_id: essenceId, image_path: imagePath, ...(steps ? { steps } : {}) }),
 
   listMedia: () => call<{ media: MediaItem[] }>('GET', '/media').then((r) => r.media),
 

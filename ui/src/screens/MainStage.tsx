@@ -88,7 +88,7 @@ export default function MainStage() {
     playThreadAnimation(dropX, dropY, essence.color);
 
     try {
-      const result = await api.applyEssence(essenceId, targetPath, 8);
+      const result = await api.applyEssence(essenceId, targetPath);
       await crossfadeSteps(result.steps);
       setBaseSrc(result.final);
     } catch (err) {

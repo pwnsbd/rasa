@@ -28,9 +28,13 @@ Device status (GPU name, CUDA availability, compute capability, VRAM, torch vers
 
 ## Status
 
-All four zones (Main Stage, Distillation Room, Media Page, Settings) are wired up and functional, including the drag-a-bottle-onto-a-photo interaction, the pour/thread/crossfade animations, and the Essence-appears-on-the-shelf-only-after-leaving-the-room behavior. **The style extraction/application itself is a placeholder**, not InstantStyle/StyleShot/Flux — `sidecar/essence.py`'s `mock-palette-v1` technique derives a dominant color + saturation/brightness from the reference image and applies it as a progressive tint, so the real pipeline contracts (Essence file/folder schema, extract/apply API shape, the animation-generation-decoupling step-list) exist and are exercised end-to-end. Swapping in the real models means rewriting `sidecar/essence.py`'s internals only — `app.py`, `paths.py`, and the whole frontend already speak the real interface from spec §2.2b.
+All four zones (Main Stage, Distillation Room, Media Page, Settings) are wired up and functional, including the drag-a-bottle-onto-a-photo interaction, the pour/thread/crossfade animations, and the Essence-appears-on-the-shelf-only-after-leaving-the-room behavior.
 
-Not yet built: the real Flux/InstantStyle/StyleShot pipeline, provenance metadata embedding + export (spec §3), and the future style marketplace (deferred beyond v1 per spec §7).
+**Style extraction/application runs a real model**: SDXL + InstantStyle (IP-Adapter), not the spec's originally-suggested Flux — see [`sidecar/pipeline_manager.py`](sidecar/pipeline_manager.py) for why (the only available Flux IP-Adapter checkpoints are gated to FLUX.1-dev and their own authors say they aren't for fine-grained style transfer, whereas InstantStyle's actual style/layout block-separation is diffusers-native and proven on SDXL). Base model and style-extraction technique stay swappable behind `sidecar/essence.py`'s `extract_essence`/`apply_essence` per spec §2.2 — swapping in Flux later if a real InstantStyle-for-Flux combination matures is a contained change to `pipeline_manager.py`.
+
+First run downloads ~9GB (SDXL base + IP-Adapter + its CLIP image encoder) into `<app-data>/models/hf-cache`, in the background from sidecar startup — `GET /models/status` and the in-app banner/Settings screen show progress. Extraction and application both fail fast with a 503 until it's ready, rather than hanging.
+
+Not yet built: progressive per-diffusion-step previews (the Main Stage crossfade currently animates original → final rather than several real intermediate frames), provenance metadata embedding + export (spec §3), and the future style marketplace (deferred beyond v1 per spec §7).
 
 ### Verifying it runs
 

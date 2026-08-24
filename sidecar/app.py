@@ -5,6 +5,7 @@ Run directly for dev: `python app.py` (reads SIDECAR_PORT / APP_*_DIR env vars s
 by electron/main.js; falls back to sane local defaults when run standalone).
 """
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,9 +14,21 @@ from pydantic import BaseModel
 import essence
 import media
 import paths
+import pipeline_manager
 from gpu import detect_gpu
 
-app = FastAPI(title="rasa sidecar")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Kick off the (large, multi-GB on first run) SDXL + InstantStyle
+    # download/load in the background as soon as the sidecar starts, rather
+    # than waiting for the first extract/apply request — see
+    # pipeline_manager.py.
+    pipeline_manager.ensure_loading_started()
+    yield
+
+
+app = FastAPI(title="rasa sidecar", lifespan=lifespan)
 
 # Dev convenience only: lets the Vite dev server (a different origin) call the
 # sidecar directly while iterating. Packaged builds proxy everything through
@@ -33,6 +46,7 @@ def health():
     return {
         "ok": True,
         "gpu": detect_gpu(),
+        "model": pipeline_manager.status(),
         "dirs": {
             "models": str(paths.models_dir()),
             "essences": str(paths.essences_dir()),
@@ -43,13 +57,29 @@ def health():
     }
 
 
+@app.get("/models/status")
+def models_status():
+    return pipeline_manager.status()
+
+
 class ExtractRequest(BaseModel):
     image_path: str
     name: str | None = None
 
 
+def _require_model_ready():
+    st = pipeline_manager.status()
+    if st["state"] != "ready":
+        # Fail fast with a clear message rather than blocking the HTTP
+        # request (and the renderer's fetch/IPC chain) for however many
+        # minutes the first-run download takes — the frontend surfaces this
+        # detail directly and /models/status lets it poll for readiness.
+        raise HTTPException(status_code=503, detail=f"Style model not ready ({st['state']}): {st.get('detail') or '…'}")
+
+
 @app.post("/essences/extract")
 def extract_essence_endpoint(req: ExtractRequest):
+    _require_model_ready()
     try:
         return essence.extract_essence(req.image_path, req.name)
     except FileNotFoundError:
@@ -75,11 +105,12 @@ def delete_essence_endpoint(essence_id: str):
 class ApplyRequest(BaseModel):
     essence_id: str
     image_path: str
-    steps: int = 8
+    steps: int = essence.DEFAULT_STEPS
 
 
 @app.post("/apply")
 def apply_endpoint(req: ApplyRequest):
+    _require_model_ready()
     try:
         result = essence.apply_essence(req.essence_id, req.image_path, req.steps)
     except FileNotFoundError:

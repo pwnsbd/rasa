@@ -46,6 +46,14 @@ export default function Settings() {
           )}
         </div>
       )}
+
+      {!loading && health?.ok && (
+        <div className="bg-surface rounded-card p-5 space-y-2 mt-4">
+          <Row label="Style model" value="SDXL + InstantStyle" />
+          <Row label="Status" value={health.model.state} />
+          {health.model.detail && <p className="mt-2 text-ink-soft text-xs leading-relaxed">{health.model.detail}</p>}
+        </div>
+      )}
     </div>
   );
 }
