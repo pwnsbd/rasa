@@ -1,0 +1,34 @@
+# Node
+node_modules/
+ui/dist/
+dist/
+dist-electron/
+build/
+*.log
+npm-debug.log*
+
+# Python
+sidecar/venv/
+sidecar/__pycache__/
+sidecar/**/__pycache__/
+*.pyc
+sidecar/tmp-devdata/
+
+# App data / Essences / models / generated media (never commit large binaries)
+models/
+sidecar/models/
+**/*.sqlite
+**/*.sqlite3
+**/essences/*
+**/media/*
+
+# Editor / OS
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Packaging output
+*.exe
+*.dmg
+*.AppImage
+*.msi

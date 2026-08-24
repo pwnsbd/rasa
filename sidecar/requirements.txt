@@ -1,0 +1,8 @@
+# Sidecar dependencies. torch is installed separately by scripts/setup-sidecar.js
+# (CUDA build if a GPU is detected at setup time, CPU build otherwise) since the
+# right wheel depends on the machine.
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+
+# Added once the extraction/generation pipeline lands (spec §2.2):
+#   diffusers, transformers, accelerate, safetensors, pillow, torch (see above)

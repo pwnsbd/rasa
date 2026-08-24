@@ -1,0 +1,22 @@
+{
+  "name": "rasa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first, GPU-aware desktop app for extracting the visual style of a reference image (an Essence) and reapplying it to other photos.",
+  "main": "electron/main.js",
+  "workspaces": [
+    "ui"
+  ],
+  "scripts": {
+    "dev:ui": "npm run dev --workspace ui",
+    "dev": "concurrently -k -n UI,ELECTRON -c cyan,magenta \"npm:dev:ui\" \"electron .\"",
+    "build:ui": "npm run build --workspace ui",
+    "start": "electron .",
+    "sidecar:setup": "node scripts/setup-sidecar.js"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "electron": "^32.0.0",
+    "wait-on": "^8.0.0"
+  }
+}
