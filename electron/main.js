@@ -15,7 +15,12 @@ let sidecarProcess = null;
 let sidecarPort = 8843; // fixed local-only port for the FastAPI sidecar (distinct from pdfToAudio's 8756 so both can run in dev)
 
 // ---- App-data layout ----
-// models:   cached base-model weights (Flux) and style-extraction adapter weights
+// models:   cached base-model weights (SDXL/InstantStyle/ControlNet) — ~11.5GB,
+//           by far the largest of these. Defaults under Electron's userData
+//           (usually %APPDATA%, i.e. the C: drive on Windows) like the rest,
+//           but that default is a poor fit for anyone tight on C: space —
+//           override with the RASA_MODELS_DIR env var to put it elsewhere
+//           (e.g. `set RASA_MODELS_DIR=Z:\rasa-models` before `npm run dev`).
 // essences: saved Essence folders (embedding + metadata) — see sidecar/paths.py
 // media:    every finished creation (Media Page archive)
 // cache:    scratch/intermediate files
@@ -24,7 +29,7 @@ function appDataDirs() {
   const root = path.join(app.getPath('userData'));
   const dirs = {
     root,
-    models: path.join(root, 'models'),
+    models: process.env.RASA_MODELS_DIR || path.join(root, 'models'),
     essences: path.join(root, 'essences'),
     media: path.join(root, 'media'),
     cache: path.join(root, 'cache'),

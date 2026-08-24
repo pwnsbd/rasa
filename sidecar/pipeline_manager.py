@@ -1,6 +1,6 @@
-"""Lazy, background-loaded singleton for the real SDXL + InstantStyle
-pipeline (spec §2.2a/b) — replaces essence.py's earlier mock-palette
-placeholder.
+"""Lazy, background-loaded singleton for the real SDXL + InstantStyle +
+ControlNet pipeline (spec §2.2a/b) — replaces essence.py's earlier
+mock-palette placeholder.
 
 Base model: SDXL, not Flux. InstantStyle's block-separation technique (style
 vs. layout blocks) is diffusers-native and proven on SDXL; the available
@@ -11,12 +11,22 @@ spec §2.2a, which is exactly what makes swapping base models later (if a
 Flux/InstantStyle combination matures) a contained change: this module is
 the only place that knows which base model is loaded.
 
-Loading ~9GB of weights (SDXL base fp16 + IP-Adapter + its CLIP image
-encoder) takes real time on first run — several minutes to download, then
-~10-20s to move onto the GPU. Runs in a background thread from server
-startup (see app.py's lifespan) so /health and /models/status can report
-progress instead of the first extract/apply request just hanging with no
-feedback.
+Also loads a Tile ControlNet alongside the IP-Adapter. Plain img2img
+`strength` alone (the earlier version of this module) is a global noise-mix
+knob, not a real structural constraint — any strength high enough to let
+the style actually take hold also let content/layout drift, which is
+exactly the failure the original InstantStyle team hit and published a
+follow-up for: InstantStyle-Plus (arXiv:2407.00788) adds a Tile ControlNet
+specifically to hold the source image's structure in place throughout
+denoising while IP-Adapter drives style. See essence.py's apply_essence for
+how the two conditioning signals combine.
+
+Loading ~11.5GB of weights (SDXL base fp16 + IP-Adapter + its CLIP image
+encoder + Tile ControlNet + the fp16-fix VAE) takes real time on first run —
+several minutes to download, then ~10-20s to move onto the GPU. Runs in a
+background thread from server startup (see app.py's lifespan) so /health and
+/models/status can report progress instead of the first extract/apply
+request just hanging with no feedback.
 """
 from __future__ import annotations
 
@@ -40,6 +50,12 @@ _status: dict = {"state": "idle", "detail": None}  # idle | loading | ready | er
 BASE_MODEL_ID = "stabilityai/stable-diffusion-xl-base-1.0"
 IP_ADAPTER_REPO = "h94/IP-Adapter"
 IP_ADAPTER_WEIGHT = "ip-adapter_sdxl.bin"
+CONTROLNET_ID = "xinsir/controlnet-tile-sdxl-1.0"  # InstantStyle-Plus's content-preservation fix, see module docstring
+VAE_FIX_ID = "madebyollin/sdxl-vae-fp16-fix"  # avoids SDXL's known fp16 VAE instability without upcasting to fp32
+# Model card default is 1.0; dropped to 0.85 after testing — content stayed
+# perfectly intact at 1.0 too, but 0.85 left slightly more room for style to
+# show (see essence.py's DEFAULT_STRENGTH comment for the fuller picture).
+CONTROLNET_CONDITIONING_SCALE = 0.85
 
 # InstantStyle (spec §2.2b): activate the IP-Adapter only in the
 # style-carrying block (up_block_0) and hold it at 0 in the layout-carrying
@@ -57,20 +73,35 @@ def _load() -> None:
     global _pipeline
     try:
         import torch
-        from diffusers import StableDiffusionXLImg2ImgPipeline
+        from diffusers import (
+            AutoencoderKL,
+            ControlNetModel,
+            EulerAncestralDiscreteScheduler,
+            StableDiffusionXLControlNetImg2ImgPipeline,
+        )
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         dtype = torch.float16 if device == "cuda" else torch.float32
         if device == "cpu":
             _status.update(detail="No GPU detected — loading for CPU. This will be very slow.")
 
-        _status.update(state="loading", detail="Downloading/loading SDXL base model (~7GB, first run only)…")
-        pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
+        _status.update(state="loading", detail="Downloading/loading Tile ControlNet (~2.5GB, first run only)…")
+        controlnet = ControlNetModel.from_pretrained(CONTROLNET_ID, torch_dtype=dtype)
+
+        _status.update(detail="Downloading/loading fp16-fix VAE (~160MB, first run only)…")
+        vae = AutoencoderKL.from_pretrained(VAE_FIX_ID, torch_dtype=dtype)
+
+        _status.update(detail="Downloading/loading SDXL base model (~7GB, first run only)…")
+        pipe = StableDiffusionXLControlNetImg2ImgPipeline.from_pretrained(
             BASE_MODEL_ID,
+            controlnet=controlnet,
+            vae=vae,
             torch_dtype=dtype,
             variant="fp16" if device == "cuda" else None,
             use_safetensors=True,
         )
+        # Recommended by the Tile ControlNet's model card for best results.
+        pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
 
         _status.update(detail="Downloading/loading InstantStyle IP-Adapter (~2GB, first run only)…")
         pipe.load_ip_adapter(IP_ADAPTER_REPO, subfolder="sdxl_models", weight_name=IP_ADAPTER_WEIGHT)
@@ -80,11 +111,12 @@ def _load() -> None:
 
         if device == "cuda":
             # SDXL + IP-Adapter + its CLIP-H image encoder + dual text
-            # encoders resident all at once leaves almost no headroom on a
-            # ~12GB card (measured ~11.3GB baseline on an RTX 5070 Ti
-            # Laptop's 12227MiB) — not enough for the UNet's own activation
-            # memory during denoising, which manifested as ~35s/step (should
-            # be ~1-3s/step) rather than an outright OOM. enable_model_cpu_offload
+            # encoders + Tile ControlNet resident all at once leaves almost
+            # no headroom on a ~12GB card (measured ~11.3GB baseline on an
+            # RTX 5070 Ti Laptop's 12227MiB even before adding the
+            # ControlNet) — not enough for the UNet's own activation memory
+            # during denoising, which manifested as ~35s/step (should be
+            # ~1-3s/step) rather than an outright OOM. enable_model_cpu_offload
             # keeps only the actively-computing submodule on GPU, swapping
             # others to CPU RAM between stages — use this INSTEAD of
             # `pipe.to(device)` (offload manages device placement itself).

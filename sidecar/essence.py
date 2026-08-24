@@ -1,14 +1,14 @@
 """Essence extraction + application (spec §2.1, §2.2b, §7).
 
-Real implementation: SDXL + InstantStyle (see pipeline_manager.py for why
-SDXL rather than the spec's originally-suggested Flux — Flux's only
-available IP-Adapter checkpoints are gated to FLUX.1-dev and their own
-authors say they aren't for fine-grained style transfer, whereas
-InstantStyle's actual style/layout block-separation technique is
-diffusers-native and proven on SDXL). An earlier "mock-palette" version of
-this file (dominant color + duotone tint, no real model) stood in while the
-pipeline contracts below were being built — see git history if useful as
-reference.
+Real implementation: SDXL + InstantStyle + a Tile ControlNet (see
+pipeline_manager.py for why SDXL rather than the spec's originally-suggested
+Flux, and why ControlNet is needed alongside IP-Adapter — plain img2img
+`strength` alone let style-driven regeneration drift too much of the
+target's own content/layout away, which is exactly the failure the
+InstantStyle authors' own follow-up paper, InstantStyle-Plus, fixes with a
+Tile ControlNet). An earlier "mock-palette" version of this file (dominant
+color + duotone tint, no real model) stood in while the pipeline contracts
+below were being built — see git history if useful as reference.
 
 `StyleExtractor.extract(reference_image) -> embedding` and
 `StyleExtractor.apply(embedding, target_image) -> conditioning` (spec §2.2b)
@@ -38,10 +38,18 @@ from safetensors.torch import load_file, save_file
 import paths
 import pipeline_manager
 
-TECHNIQUE = "instantstyle-sdxl-v1"
+TECHNIQUE = "instantstyle-sdxl-controlnet-v1"
 THUMBNAIL_SIZE = (160, 160)
 WORKING_MAX_DIM = 1024  # SDXL's native resolution; img2img input is resized to this
-DEFAULT_STRENGTH = 0.55  # how much the target photo's own structure survives (spec §2.1: content preserved)
+
+# Tuned empirically after adding the Tile ControlNet (see pipeline_manager.py):
+# with ControlNet holding structure, strength can run much higher than the
+# pre-ControlNet 0.55 without content drift — tested up to 0.85 with zero
+# observed drift across both flat-color and textured synthetic images, so
+# defaults sit there to favor a visible style shift. Both are exposed as
+# optional /apply request overrides (see app.py's ApplyRequest) for further
+# tuning without a code change.
+DEFAULT_STRENGTH = 0.85
 DEFAULT_GUIDANCE = 5.0
 DEFAULT_STEPS = 30
 NEGATIVE_PROMPT = "lowres, blurry, bad anatomy, worst quality, low quality, watermark, text"
@@ -178,11 +186,21 @@ def delete_essence(essence_id: str) -> None:
     shutil.rmtree(out_dir)
 
 
-def apply_essence(essence_id: str, target_image_path: str, steps: int = DEFAULT_STEPS) -> dict:
-    """Runs the real SDXL img2img + InstantStyle IP-Adapter pipeline: the
-    target photo is used as the img2img init image (so its own structure
-    partially survives per `strength`, spec §2.1's "content preserved"),
-    restyled toward the essence's embedding.
+def apply_essence(
+    essence_id: str,
+    target_image_path: str,
+    steps: int = DEFAULT_STEPS,
+    strength: float | None = None,
+    controlnet_scale: float | None = None,
+) -> dict:
+    """Runs the real SDXL img2img + InstantStyle IP-Adapter + Tile ControlNet
+    pipeline: the target photo is used both as the img2img init image and as
+    the ControlNet's control image (the Tile ControlNet's "Tile Var" /
+    image-variation mode wants just the plain resized image, no edge/blur
+    preprocessing — see pipeline_manager.py), restyled toward the essence's
+    embedding. The ControlNet holds structure throughout denoising — this is
+    what actually keeps content/layout intact; `strength` alone couldn't
+    (see the module + pipeline_manager docstrings).
 
     Returns only the original and final frames (not a per-diffusion-step
     sequence) — the Main Stage's crossfade still runs over its own fixed
@@ -201,8 +219,12 @@ def apply_essence(essence_id: str, target_image_path: str, steps: int = DEFAULT_
         prompt="",
         negative_prompt=NEGATIVE_PROMPT,
         image=working,
+        control_image=working,
+        controlnet_conditioning_scale=(
+            controlnet_scale if controlnet_scale is not None else pipeline_manager.CONTROLNET_CONDITIONING_SCALE
+        ),
         ip_adapter_image_embeds=embeds,
-        strength=DEFAULT_STRENGTH,
+        strength=strength if strength is not None else DEFAULT_STRENGTH,
         guidance_scale=DEFAULT_GUIDANCE,
         num_inference_steps=steps,
     )
