@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import Lightbox from '../components/Lightbox';
 import { TrashIcon } from '../components/icons';
 import { api, type MediaItem } from '../lib/api';
 
@@ -7,6 +8,7 @@ import { api, type MediaItem } from '../lib/api';
 // successful application, so this is otherwise a pure read/list view.
 export default function MediaPage() {
   const [items, setItems] = useState<MediaItem[] | null>(null);
+  const [viewing, setViewing] = useState<MediaItem | null>(null);
 
   useEffect(() => {
     api
@@ -35,7 +37,9 @@ export default function MediaPage() {
       <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-4">
         {items?.map((item) => (
           <div key={item.id} className="group relative bg-surface/60 rounded-card overflow-hidden">
-            <img src={item.image} alt="" className="w-full aspect-square object-cover" />
+            <button onClick={() => setViewing(item)} title="View full size" className="block w-full">
+              <img src={item.image} alt="" className="w-full aspect-square object-cover" />
+            </button>
             <div className="p-2.5">
               <p className="text-ink text-xs truncate">{item.essence_name}</p>
               <p className="text-ink-soft text-[11px]">{new Date(item.created_at).toLocaleString()}</p>
@@ -50,6 +54,8 @@ export default function MediaPage() {
           </div>
         ))}
       </div>
+
+      {viewing && <Lightbox src={viewing.image} alt={viewing.essence_name} onClose={() => setViewing(null)} />}
     </div>
   );
 }
