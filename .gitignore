@@ -6,6 +6,7 @@ dist-electron/
 build/
 *.log
 npm-debug.log*
+*.tsbuildinfo
 
 # Python
 sidecar/venv/
