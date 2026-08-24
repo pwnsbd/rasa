@@ -26,17 +26,20 @@ Essence-on-disk schema (spec §7):
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
+import torch
 from PIL import Image
 from safetensors.torch import load_file, save_file
 
 import paths
 import pipeline_manager
+import segmentation
 
 TECHNIQUE = "instantstyle-sdxl-controlnet-v1"
 THUMBNAIL_SIZE = (160, 160)
@@ -201,12 +204,31 @@ def delete_essence(essence_id: str) -> None:
     shutil.rmtree(out_dir)
 
 
+def _run_generation(pipe, embeds, working, strength, controlnet_scale, steps, generator=None):
+    result = pipe(
+        prompt="",
+        negative_prompt=NEGATIVE_PROMPT,
+        image=working,
+        control_image=working,
+        controlnet_conditioning_scale=controlnet_scale,
+        ip_adapter_image_embeds=embeds,
+        strength=strength,
+        guidance_scale=DEFAULT_GUIDANCE,
+        num_inference_steps=steps,
+        generator=generator,
+    )
+    return result.images[0]
+
+
 def apply_essence(
     essence_id: str,
     target_image_path: str,
     steps: int = DEFAULT_STEPS,
     strength: float | None = None,
     controlnet_scale: float | None = None,
+    isolate_subject: bool = True,
+    subject_strength: float | None = None,
+    subject_controlnet_scale: float | None = None,
 ) -> dict:
     """Runs the real SDXL img2img + InstantStyle IP-Adapter + Tile ControlNet
     pipeline: the target photo is used both as the img2img init image and as
@@ -216,6 +238,18 @@ def apply_essence(
     embedding. The ControlNet holds structure throughout denoising — this is
     what actually keeps content/layout intact; `strength` alone couldn't
     (see the module + pipeline_manager docstrings).
+
+    Subject-isolated strength blending (see segmentation.py): when a subject
+    is segmented from the target, generation runs *twice* — once at the
+    background strength/controlnet_scale over the whole frame, once at a
+    lower, tighter subject strength/controlnet_scale (suggested by face
+    detection within the subject region, or overridden) — then composites
+    the two with the subject's soft feathered mask. Both passes share one
+    seeded generator: without that, the two outputs diverge in grain/noise/
+    color balance independent of the strength difference, which reads as a
+    mismatch at the mask boundary even though the mask itself is
+    well-feathered. `isolate_subject=False`, or no distinguishable subject
+    found, falls back to the original single-pass behavior.
 
     Returns only the original and final frames (not a per-diffusion-step
     sequence) — the Main Stage's crossfade still runs over its own fixed
@@ -230,19 +264,41 @@ def apply_essence(
     target = Image.open(target_image_path)
     working = _resize_working(target)
 
-    result = pipe(
-        prompt="",
-        negative_prompt=NEGATIVE_PROMPT,
-        image=working,
-        control_image=working,
-        controlnet_conditioning_scale=(
-            controlnet_scale if controlnet_scale is not None else pipeline_manager.CONTROLNET_CONDITIONING_SCALE
-        ),
-        ip_adapter_image_embeds=embeds,
-        strength=strength if strength is not None else DEFAULT_STRENGTH,
-        guidance_scale=DEFAULT_GUIDANCE,
-        num_inference_steps=steps,
+    bg_strength = strength if strength is not None else DEFAULT_STRENGTH
+    bg_controlnet_scale = (
+        controlnet_scale if controlnet_scale is not None else pipeline_manager.CONTROLNET_CONDITIONING_SCALE
     )
-    final = result.images[0]
 
-    return {"steps": [_to_data_url(working), _to_data_url(final)], "final": _to_data_url(final)}
+    mask = segmentation.get_subject_mask(working) if isolate_subject else None
+    subject_detected = mask is not None
+    face_detected = False
+    suggested_strength = suggested_controlnet_scale = None
+
+    if subject_detected:
+        face_detected = segmentation.detect_face(working, mask)
+        suggested_strength, suggested_controlnet_scale = segmentation.suggest_subject_params(face_detected)
+        actual_subject_strength = subject_strength if subject_strength is not None else suggested_strength
+        actual_subject_controlnet_scale = (
+            subject_controlnet_scale if subject_controlnet_scale is not None else suggested_controlnet_scale
+        )
+
+        seed = int.from_bytes(os.urandom(4), "big")
+        gen_a = torch.Generator(device=pipe._execution_device).manual_seed(seed)
+        gen_b = torch.Generator(device=pipe._execution_device).manual_seed(seed)
+
+        pass_a = _run_generation(pipe, embeds, working, bg_strength, bg_controlnet_scale, steps, gen_a)
+        pass_b = _run_generation(
+            pipe, embeds, working, actual_subject_strength, actual_subject_controlnet_scale, steps, gen_b
+        )
+        final = Image.composite(pass_b, pass_a, mask)
+    else:
+        final = _run_generation(pipe, embeds, working, bg_strength, bg_controlnet_scale, steps)
+
+    return {
+        "steps": [_to_data_url(working), _to_data_url(final)],
+        "final": _to_data_url(final),
+        "subject_detected": subject_detected,
+        "face_detected": face_detected,
+        "suggested_subject_strength": suggested_strength,
+        "suggested_subject_controlnet_scale": suggested_controlnet_scale,
+    }

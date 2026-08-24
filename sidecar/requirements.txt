@@ -3,9 +3,12 @@
 # right wheel depends on the machine.
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-pillow==11.0.0
+# pillow/numpy pinned to what rembg[cpu] actually resolves to below (it requires
+# pillow>=12.1.0 and numpy>=2.3.0) — installing these two ahead of rembg with the
+# old pins (pillow==11.0.0, numpy==2.1.3) would conflict on a fresh setup.
+pillow==12.3.0
 pillow-heif==0.20.0  # HEIC/HEIF support (iPhone photos) — Pillow has no built-in codec for it
-numpy==2.1.3
+numpy==2.5.2
 
 # Real style-extraction/generation pipeline (spec §2.2): SDXL base +
 # InstantStyle IP-Adapter — see sidecar/pipeline_manager.py for why SDXL,
@@ -15,3 +18,15 @@ transformers==4.46.3
 accelerate==1.1.1
 safetensors==0.4.5
 hf_xet==1.6.0
+
+# Subject-isolated strength blending (spec-adjacent feature — see
+# sidecar/segmentation.py): rembg does subject/background matting,
+# opencv-python-headless's bundled Haar cascade does face detection within
+# the segmented region. [cpu] extra is required — rembg's base install has
+# no onnxruntime backend at all and fails at runtime without it.
+# opencv-python-headless pinned to a mature 4.x release deliberately: 5.0.0
+# (what an unpinned install resolves to as of writing) ships cv2/data/ empty,
+# with no bundled Haar cascade files at all — a packaging gap in that very
+# new major version, confirmed by direct inspection, not present in 4.x.
+rembg[cpu]==2.0.81
+opencv-python-headless==4.10.0.84

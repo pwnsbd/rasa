@@ -123,15 +123,27 @@ class ApplyRequest(BaseModel):
     essence_id: str
     image_path: str
     steps: int = essence.DEFAULT_STEPS
-    strength: float | None = None  # override for tuning; None -> essence.DEFAULT_STRENGTH
-    controlnet_scale: float | None = None  # override for tuning; None -> pipeline_manager.CONTROLNET_CONDITIONING_SCALE
+    strength: float | None = None  # background-region override; None -> essence.DEFAULT_STRENGTH
+    controlnet_scale: float | None = None  # background-region override; None -> pipeline_manager.CONTROLNET_CONDITIONING_SCALE
+    isolate_subject: bool = True  # run subject-isolated two-pass blending when a subject is found; False -> always single-pass
+    subject_strength: float | None = None  # override for the suggested subject-region strength (see segmentation.py)
+    subject_controlnet_scale: float | None = None  # override for the suggested subject-region controlnet_scale
 
 
 @app.post("/apply")
 def apply_endpoint(req: ApplyRequest):
     _require_model_ready()
     try:
-        result = essence.apply_essence(req.essence_id, req.image_path, req.steps, req.strength, req.controlnet_scale)
+        result = essence.apply_essence(
+            req.essence_id,
+            req.image_path,
+            req.steps,
+            req.strength,
+            req.controlnet_scale,
+            req.isolate_subject,
+            req.subject_strength,
+            req.subject_controlnet_scale,
+        )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Essence or target image not found")
     except Exception as e:  # noqa: BLE001

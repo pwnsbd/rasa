@@ -24,14 +24,7 @@ npm run dev              # Vite dev server + Electron, concurrently
 
 `sidecar:setup` detects an NVIDIA GPU via `nvidia-smi` and installs a CUDA (cu128) torch build if found, CPU otherwise. cu128 specifically (not an older CUDA build) is required for current-gen "Blackwell" GPUs (RTX 50-series, compute capability sm_120, including this project's RTX 5070 dev target) — see the comment in [`scripts/setup-sidecar.js`](scripts/setup-sidecar.js).
 
-Model weights (~11.5GB — SDXL, InstantStyle IP-Adapter, Tile ControlNet, the fp16-fix VAE) download to `<userData>/models`, which defaults under Electron's `app.getPath('userData')` — usually the C: drive on Windows (`%APPDATA%\rasa\models`). If that's not where you want ~11.5GB, set `RASA_MODELS_DIR` before launching to redirect just the model cache (everything else — Essences, Media, db — stays on the normal small app-data path):
-
-```
-set RASA_MODELS_DIR=Z:\rasa-models
-npm run dev
-```
-
-Already downloaded it to the default location and want to move rather than re-download? Stop the app first (a running process holds a lock on the folder), then move `<userData>\models` (find `<userData>` via `%APPDATA%\rasa` on Windows) to the new location before setting `RASA_MODELS_DIR` to match.
+All app data — models (~13GB+ once the subject-isolation dependencies' own model downloads are included), Essences, Media, cache, db, and Electron's own internal caches — lives in `<project-root>/appdata/`, not wherever Electron's OS-default `userData` would otherwise put it (usually the C: drive on Windows, `%APPDATA%\rasa`). This is a deliberate `app.setPath('userData', ...)` in `electron/main.js`, not a default worth trusting an env var to redirect every launch — that was tried first, and a forgotten env var on one real run silently re-downloaded the entire model cache back onto C:. `RASA_MODELS_DIR` still exists as a further override if you want the model cache specifically somewhere other than `appdata/models` (everything else stays under `appdata/`).
 
 Device status (GPU name, CUDA availability, compute capability, VRAM, torch version) is visible in-app on the Settings screen, and always available at `GET http://127.0.0.1:8843/health` while the sidecar is up.
 
@@ -46,6 +39,8 @@ All four zones (Main Stage, Distillation Room, Media Page, Settings) are wired u
 First run downloads ~11.5GB (SDXL base + IP-Adapter + its CLIP image encoder + Tile ControlNet + the fp16-fix VAE) into `<models-dir>/hf-cache` (see the `RASA_MODELS_DIR` note above), in the background from sidecar startup — `GET /models/status` and the in-app banner/Settings screen show progress. Extraction and application both fail fast with a 503 until it's ready, rather than hanging.
 
 **Image formats**: PNG, JPEG, WebP, HEIC/HEIF (iPhone photos, via `pillow-heif`), BMP, GIF, and TIFF are all accepted, both as reference/target images and for display. HEIC and TIFF specifically have no Chromium `<img>` codec at all, so previewing them (not just processing them) routes through a new `POST /utils/preview` sidecar endpoint that decodes via Pillow and re-encodes as a displayable PNG — see `electron/main.js`'s `image:readAsDataUrl` handler. That endpoint doesn't require the style model to be loaded, so previews work even during the first-run download.
+
+**Subject-isolated strength blending**: on a target photo with a distinguishable subject, `/apply` now segments subject from background (`rembg`, `u2net` model, soft feathered mask) and runs generation twice — background at the usual strength/`controlnet_scale`, subject region at a lower, tighter strength suggested by whether a face was detected in that region (OpenCV's bundled Haar cascade, scoped to the subject's bounding box) — then composites the two through the mask. Both passes share one seeded generator so they only differ by strength, not grain/noise. Fixes over-distorted faces from applying one global strength across the whole photo. `isolate_subject` (default on), `subject_strength`, and `subject_controlnet_scale` are exposed as `/apply` overrides alongside the existing `strength`/`controlnet_scale`; the response reports what was detected and suggested. Falls back to the original single-pass behavior automatically when no distinguishable subject is found (a landscape, for instance) or when `isolate_subject=false`. See `sidecar/segmentation.py` for the library-choice reasoning (why `rembg`+Haar cascade over SAM/`mediapipe`).
 
 Not yet built: progressive per-diffusion-step previews (the Main Stage crossfade currently animates original → final rather than several real intermediate frames), provenance metadata embedding + export (spec §3), and the future style marketplace (deferred beyond v1 per spec §7).
 

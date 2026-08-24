@@ -16,6 +16,9 @@ sidecar/**/__pycache__/
 sidecar/tmp-devdata/
 
 # App data / Essences / models / generated media (never commit large binaries)
+# appdata/ is Electron's whole relocated userData root (see electron/main.js) —
+# app-data folders, model cache, and Electron's own internal caches all land here.
+appdata/
 models/
 sidecar/models/
 **/*.sqlite

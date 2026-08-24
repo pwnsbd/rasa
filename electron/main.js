@@ -14,13 +14,21 @@ let mainWindow = null;
 let sidecarProcess = null;
 let sidecarPort = 8843; // fixed local-only port for the FastAPI sidecar (distinct from pdfToAudio's 8756 so both can run in dev)
 
+// Keep all app data — including Electron's own internal caches (GPUCache,
+// Code Cache, Session Storage, etc.) — on whichever drive the project
+// itself lives on, not wherever Electron's OS-default userData happens to
+// be (usually %APPDATA%, the C: drive on Windows). A ~11.5GB model cache
+// landing on a drive the user doesn't want it on isn't a preference to
+// leave to an env var someone has to remember every launch — it's the
+// default. Must run before any app.getPath('userData') call, hence right
+// here at module top rather than inside appDataDirs(). RASA_MODELS_DIR
+// (see appDataDirs() below) still exists as a further override for anyone
+// who wants the model cache specifically somewhere else again.
+app.setPath('userData', path.join(__dirname, '..', 'appdata'));
+
 // ---- App-data layout ----
 // models:   cached base-model weights (SDXL/InstantStyle/ControlNet) — ~11.5GB,
-//           by far the largest of these. Defaults under Electron's userData
-//           (usually %APPDATA%, i.e. the C: drive on Windows) like the rest,
-//           but that default is a poor fit for anyone tight on C: space —
-//           override with the RASA_MODELS_DIR env var to put it elsewhere
-//           (e.g. `set RASA_MODELS_DIR=Z:\rasa-models` before `npm run dev`).
+//           by far the largest of these.
 // essences: saved Essence folders (embedding + metadata) — see sidecar/paths.py
 // media:    every finished creation (Media Page archive)
 // cache:    scratch/intermediate files
