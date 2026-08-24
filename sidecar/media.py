@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
@@ -55,3 +56,13 @@ def list_creations() -> list[dict]:
         out.append({**meta, "image": f"data:image/png;base64,{b64}"})
     out.sort(key=lambda c: c["created_at"], reverse=True)
     return out
+
+
+def delete_creation(creation_id: str) -> None:
+    root = paths.media_dir().resolve()
+    out_dir = (root / creation_id).resolve()
+    # creation_id ultimately comes from an HTTP path param — guard against a
+    # "../.." id escaping media_dir before it ever reaches rmtree.
+    if not out_dir.is_relative_to(root) or not out_dir.is_dir():
+        raise FileNotFoundError(creation_id)
+    shutil.rmtree(out_dir)

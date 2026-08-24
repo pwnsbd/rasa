@@ -38,8 +38,12 @@ export const api = {
 
   listEssences: () => call<{ essences: Essence[] }>('GET', '/essences').then((r) => r.essences),
 
+  deleteEssence: (essenceId: string) => call<{ ok: true }>('DELETE', `/essences/${essenceId}`),
+
   applyEssence: (essenceId: string, imagePath: string, steps = 8) =>
     call<ApplyResult>('POST', '/apply', { essence_id: essenceId, image_path: imagePath, steps }),
 
   listMedia: () => call<{ media: MediaItem[] }>('GET', '/media').then((r) => r.media),
+
+  deleteMedia: (mediaId: string) => call<{ ok: true }>('DELETE', `/media/${mediaId}`),
 };

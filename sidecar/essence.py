@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import colorsys
 import json
+import shutil
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
@@ -164,6 +165,21 @@ def list_essences() -> list[dict]:
 def get_essence_embedding(essence_id: str) -> dict:
     embedding_path = paths.essences_dir() / essence_id / "embedding.json"
     return json.loads(embedding_path.read_text())
+
+
+def delete_essence(essence_id: str) -> None:
+    """Removes an Essence's on-disk folder entirely. Does not touch any Media
+    Page creations already made with it — those keep their saved image and
+    essence_name (a label, not a live reference) even if the essence they
+    came from is later deleted.
+    """
+    root = paths.essences_dir().resolve()
+    out_dir = (root / essence_id).resolve()
+    # essence_id ultimately comes from an HTTP path param — guard against a
+    # "../.." id escaping essences_dir before it ever reaches rmtree.
+    if not out_dir.is_relative_to(root) or not out_dir.is_dir():
+        raise FileNotFoundError(essence_id)
+    shutil.rmtree(out_dir)
 
 
 def apply_essence(essence_id: str, target_image_path: str, steps: int = 8) -> dict:

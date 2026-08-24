@@ -45,6 +45,16 @@ export default function MainStage() {
     }
   }
 
+  async function deleteEssence(target: Essence) {
+    try {
+      await api.deleteEssence(target.id);
+      setEssences((prev) => prev.filter((e) => e.id !== target.id));
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : 'Could not delete essence.');
+      setTimeout(() => setStatus(null), 2000);
+    }
+  }
+
   async function chooseTarget(overridePath?: string) {
     const path = overridePath ?? (await window.appBridge.openImageDialog());
     if (!path) return;
@@ -193,7 +203,7 @@ export default function MainStage() {
         )}
       </div>
 
-      <EssenceShelf ref={shelfRef} essences={essences} />
+      <EssenceShelf ref={shelfRef} essences={essences} onDelete={deleteEssence} />
 
       {/* Fixed viewport-space layer for the thread/particle animation. */}
       <div ref={particlesRef} className="fixed inset-0 pointer-events-none z-40" />

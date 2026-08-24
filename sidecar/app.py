@@ -63,6 +63,15 @@ def list_essences_endpoint():
     return {"essences": essence.list_essences()}
 
 
+@app.delete("/essences/{essence_id}")
+def delete_essence_endpoint(essence_id: str):
+    try:
+        essence.delete_essence(essence_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Essence not found")
+    return {"ok": True}
+
+
 class ApplyRequest(BaseModel):
     essence_id: str
     image_path: str
@@ -87,6 +96,15 @@ def apply_endpoint(req: ApplyRequest):
 @app.get("/media")
 def list_media_endpoint():
     return {"media": media.list_creations()}
+
+
+@app.delete("/media/{creation_id}")
+def delete_media_endpoint(creation_id: str):
+    try:
+        media.delete_creation(creation_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Creation not found")
+    return {"ok": True}
 
 
 if __name__ == "__main__":

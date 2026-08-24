@@ -50,6 +50,17 @@ export function AlchemyGearIcon(props: { className?: string }) {
   );
 }
 
+export function TrashIcon(props: { className?: string }) {
+  return (
+    <svg {...base} className={props.className}>
+      <path d="M4.5 7h15" />
+      <path d="M9.5 7V4.8a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1V7" />
+      <path d="M6.5 7 7.3 19a1.6 1.6 0 0 0 1.6 1.5h6.2a1.6 1.6 0 0 0 1.6-1.5L17.5 7" />
+      <path d="M10.3 11v6M13.7 11v6" />
+    </svg>
+  );
+}
+
 export function BottleBadge(props: { color: [number, number, number]; size?: number }) {
   const { color, size = 18 } = props;
   return (
