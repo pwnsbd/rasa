@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-import essence
+import essence_store
 import paths
 from essence_models import EssenceMeta, PaletteProfile
 
@@ -60,7 +60,7 @@ def test_list_essences_loads_a_legacy_essence_without_crashing(monkeypatch, tmp_
 
     monkeypatch.setattr(paths, "essences_dir", lambda: essences_dir)
 
-    result = essence.list_essences()
+    result = essence_store.list_essences()
     assert len(result) == 1
     assert result[0]["id"] == "legacy1"
     assert result[0]["version"] == 1
@@ -87,7 +87,7 @@ def test_list_essences_loads_a_new_style_essence(monkeypatch, tmp_path):
 
     monkeypatch.setattr(paths, "essences_dir", lambda: essences_dir)
 
-    result = essence.list_essences()
+    result = essence_store.list_essences()
     assert len(result) == 1
     assert result[0]["version"] == 2
     assert result[0]["analysis"]["palette"]["mean_saturation"] == pytest.approx(0.4)

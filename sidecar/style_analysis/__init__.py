@@ -1,6 +1,6 @@
 """Reference-image style analysis: palette, texture, stroke/directional-flow,
 and general style statistics. Distillation-time only — see
-essence.py's extract_essence for the integration point. Each analyzer takes
+essence_store.py's extract_essence for the integration point. Each analyzer takes
 a PIL Image and returns one of the Pydantic profiles from essence_models.py.
 
 All four run at a fixed, small analysis resolution (see _common.py),

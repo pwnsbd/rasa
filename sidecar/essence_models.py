@@ -5,7 +5,7 @@ These models add a structured, inspectable representation of style —
 palette/texture/stroke/statistics extracted from the reference at
 Distillation time (see style_analysis/) — as a foundation for future
 generation-time controls. None of this changes the actual style transfer
-yet: apply_essence in essence.py is untouched by this module.
+yet: apply_essence in generation.py is untouched by this module.
 
 Backward compatibility is structural, not a migration. Every analysis
 field is Optional with a default of None, and `version` defaults to 1 —
@@ -15,6 +15,8 @@ Pydantic fills the defaults, and the essence loads with no analysis data
 rather than crashing or needing a rewrite. New essences write version=2.
 """
 from __future__ import annotations
+
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -54,6 +56,17 @@ class StyleStatistics(BaseModel):
     local_contrast: float
 
 
+class BlendIngredientInfo(BaseModel):
+    """Provenance record for one ingredient of a blended Essence (see
+    essence_store.py's blend_essences) — not itself a live reference (the
+    source image/essence can be deleted or moved without affecting the
+    blend, same spirit as delete_essence's note about Media Page creations).
+    """
+    name: str
+    weight: float  # normalized share of this blend, 0..1
+    source: Literal["image", "essence"]
+
+
 class EssenceMeta(BaseModel):
     id: str
     name: str
@@ -66,3 +79,10 @@ class EssenceMeta(BaseModel):
     texture: TextureProfile | None = None
     stroke: StrokeProfile | None = None
     style_statistics: StyleStatistics | None = None
+
+    # Set only for Essences created via the Cauldron (blend_essences) — None
+    # for a normal single-reference Essence. No analysis fields above are
+    # populated for a blend: there's no single reference image to run
+    # style_analysis/ against, and Optional already exists to represent
+    # "no analysis available" honestly rather than fabricating one.
+    blended_from: list[BlendIngredientInfo] | None = None

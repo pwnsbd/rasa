@@ -130,6 +130,6 @@ def analyze_stroke(image: Image.Image) -> tuple[StrokeProfile, Image.Image]:
         curvature=round(curvature, 4),
         coherence=round(global_coherence, 4),
         density=round(density, 4),
-        orientation_map_path=None,  # filled in by essence.py once it knows the essence_id/output path
+        orientation_map_path=None,  # filled in by essence_store.py once it knows the essence_id/output path
     )
     return profile, viz

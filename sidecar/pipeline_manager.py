@@ -1,5 +1,5 @@
 """Lazy, background-loaded singleton for the real SDXL + InstantStyle +
-ControlNet pipeline (spec §2.2a/b) — replaces essence.py's earlier
+ControlNet pipeline (spec §2.2a/b) — replaces essence_store.py's earlier
 mock-palette placeholder.
 
 Base model: SDXL, not Flux. InstantStyle's block-separation technique (style
@@ -18,7 +18,7 @@ the style actually take hold also let content/layout drift, which is
 exactly the failure the original InstantStyle team hit and published a
 follow-up for: InstantStyle-Plus (arXiv:2407.00788) adds a Tile ControlNet
 specifically to hold the source image's structure in place throughout
-denoising while IP-Adapter drives style. See essence.py's apply_essence for
+denoising while IP-Adapter drives style. See generation.py's apply_essence for
 how the two conditioning signals combine.
 
 Loading ~11.5GB of weights (SDXL base fp16 + IP-Adapter + its CLIP image
@@ -54,7 +54,7 @@ CONTROLNET_ID = "xinsir/controlnet-tile-sdxl-1.0"  # InstantStyle-Plus's content
 VAE_FIX_ID = "madebyollin/sdxl-vae-fp16-fix"  # avoids SDXL's known fp16 VAE instability without upcasting to fp32
 # Model card default is 1.0; dropped to 0.85 after testing — content stayed
 # perfectly intact at 1.0 too, but 0.85 left slightly more room for style to
-# show (see essence.py's DEFAULT_STRENGTH comment for the fuller picture).
+# show (see generation.py's DEFAULT_STRENGTH comment for the fuller picture).
 CONTROLNET_CONDITIONING_SCALE = 0.85
 
 # InstantStyle (spec §2.2b): activate the IP-Adapter only in the
@@ -120,7 +120,7 @@ def _load() -> None:
             # keeps only the actively-computing submodule on GPU, swapping
             # others to CPU RAM between stages — use this INSTEAD of
             # `pipe.to(device)` (offload manages device placement itself).
-            # See essence.py's use of `_execution_device` rather than
+            # See essence_store.py/generation.py's use of `_execution_device` rather than
             # `.device` for why direct pipeline calls need to account for
             # this too.
             _status.update(detail="Configuring GPU memory offload…")

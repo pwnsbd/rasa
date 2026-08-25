@@ -1,5 +1,5 @@
 """Subject/background segmentation + face detection, for the two-pass
-subject-isolated strength blending in essence.py's apply_essence.
+subject-isolated strength blending in generation.py's apply_essence.
 
 rembg (u2net model) does subject/background matting -> a soft, feathered
 mask. OpenCV's bundled Haar cascade does face detection within the
@@ -128,7 +128,7 @@ def detect_face(image: Image.Image, mask: Image.Image) -> bool:
 
 def suggest_subject_params(face_detected: bool) -> tuple[float, float]:
     """(strength, controlnet_scale) suggested for the subject-region pass —
-    a starting point, always overridable per-request (see essence.py).
+    a starting point, always overridable per-request (see generation.py).
     Tighter (lower strength, higher controlnet_scale) when a face is
     present, since that's where small structural changes read as obviously
     wrong; looser for a faceless subject (an object, a body without a
