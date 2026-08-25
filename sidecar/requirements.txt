@@ -3,6 +3,9 @@
 # right wheel depends on the machine.
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
+# Pinned explicitly, not just relied on as fastapi's transitive dependency —
+# essence_models.py imports it directly for the structured Essence schema.
+pydantic==2.13.4
 # pillow/numpy pinned to what rembg[cpu] actually resolves to below (it requires
 # pillow>=12.1.0 and numpy>=2.3.0) — installing these two ahead of rembg with the
 # old pins (pillow==11.0.0, numpy==2.1.3) would conflict on a fresh setup.
@@ -30,3 +33,8 @@ hf_xet==1.6.0
 # new major version, confirmed by direct inspection, not present in 4.x.
 rembg[cpu]==2.0.81
 opencv-python-headless==4.10.0.84
+
+# Dev only — sidecar/tests/. scikit-image/scipy (LAB color conversion,
+# k-means clustering, structure-tensor math for style_analysis/) are
+# already present, pulled in transitively by rembg above.
+pytest==9.1.1

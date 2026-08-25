@@ -14,20 +14,33 @@ below were being built — see git history if useful as reference.
 `StyleExtractor.apply(embedding, target_image) -> conditioning` (spec §2.2b)
 map onto `extract_essence` and `apply_essence` below.
 
-Essence-on-disk schema (spec §7):
+Essence-on-disk schema (spec §7 + the structured-Essence extension —
+see essence_models.py):
     essences/<id>/
-        meta.json             {id, name, technique, created_at, color}
+        meta.json             EssenceMeta (id, name, technique, created_at,
+                               color, version, palette, texture, stroke,
+                               style_statistics)
         thumbnail.png          source reference, resized
         embedding.safetensors  the real IP-Adapter image embedding
         embedding.json         UI-only color/tone stats (shelf badge, bottle
                                 pour animation color) — NOT used for the
                                 actual style transfer
+        stroke_map.png         stroke orientation-field debug visualization,
+                                when stroke analysis succeeded
+
+Structured analysis (palette/texture/stroke/style_statistics) is
+Distillation-time only: computed once in extract_essence below, saved to
+meta.json, and never recomputed — apply_essence loads the embedding and
+does not touch style_analysis/ at all. None of it feeds generation yet
+(spec's own explicit sequencing: verify extraction before deciding how it
+influences diffusion).
 """
 from __future__ import annotations
 
 import json
 import os
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone
 from io import BytesIO
@@ -40,8 +53,14 @@ from safetensors.torch import load_file, save_file
 import paths
 import pipeline_manager
 import segmentation
+from essence_models import EssenceMeta
+from style_analysis.palette import extract_palette
+from style_analysis.statistics import analyze_style_statistics
+from style_analysis.stroke import analyze_stroke
+from style_analysis.texture import analyze_texture
 
 TECHNIQUE = "instantstyle-sdxl-controlnet-v1"
+ESSENCE_SCHEMA_VERSION = 2
 THUMBNAIL_SIZE = (160, 160)
 WORKING_MAX_DIM = 1024  # SDXL's native resolution; img2img input is resized to this
 
@@ -119,6 +138,42 @@ def preview_data_url(image_path: str) -> str:
     return _to_data_url(img)
 
 
+def _run_analyzers(src: Image.Image, out_dir: Path) -> dict:
+    """Runs the four style_analysis/ analyzers, each independently
+    try/excepted — per the spec, one failing (e.g. stroke) must never block
+    Essence creation, since the IP-Adapter embedding remains the one
+    load-bearing component. Returns a dict of the field name -> profile (or
+    None on failure), ready to spread into EssenceMeta. Timing for each is
+    printed — see the module docstring on why (dev-visible, not a new
+    logging framework).
+    """
+    results: dict = {"palette": None, "texture": None, "stroke": None, "style_statistics": None}
+
+    for field, fn in (
+        ("palette", lambda: extract_palette(src)),
+        ("texture", lambda: analyze_texture(src)),
+        ("style_statistics", lambda: analyze_style_statistics(src)),
+    ):
+        start = time.perf_counter()
+        try:
+            results[field] = fn()
+            print(f"[essence] {field}: {(time.perf_counter() - start) * 1000:.0f}ms")
+        except Exception as e:  # noqa: BLE001 — analysis failure must not block Essence creation
+            print(f"[essence] {field} FAILED ({(time.perf_counter() - start) * 1000:.0f}ms): {e}")
+
+    start = time.perf_counter()
+    try:
+        stroke_profile, stroke_viz = analyze_stroke(src)
+        stroke_viz.save(out_dir / "stroke_map.png")
+        stroke_profile.orientation_map_path = "stroke_map.png"
+        results["stroke"] = stroke_profile
+        print(f"[essence] stroke: {(time.perf_counter() - start) * 1000:.0f}ms")
+    except Exception as e:  # noqa: BLE001
+        print(f"[essence] stroke FAILED ({(time.perf_counter() - start) * 1000:.0f}ms): {e}")
+
+    return results
+
+
 def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
     src = Image.open(reference_image_path)
     dominant = _dominant_color(src)
@@ -129,6 +184,7 @@ def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
     # moves them to GPU for their turn, so `.device` doesn't reliably name
     # the GPU. `_execution_device` is what the pipeline's own __call__ uses
     # internally for this exact reason.
+    embed_start = time.perf_counter()
     embeds = pipe.prepare_ip_adapter_image_embeds(
         ip_adapter_image=[src.convert("RGB")],
         ip_adapter_image_embeds=None,
@@ -136,6 +192,7 @@ def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
         num_images_per_prompt=1,
         do_classifier_free_guidance=True,
     )
+    print(f"[essence] ip_adapter_embed: {(time.perf_counter() - embed_start) * 1000:.0f}ms")
 
     essence_id = uuid.uuid4().hex[:12]
     out_dir = paths.essences_dir() / essence_id
@@ -154,16 +211,38 @@ def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
 
     (out_dir / "embedding.json").write_text(json.dumps({"dominant_color": list(dominant)}, indent=2))
 
-    meta = {
-        "id": essence_id,
-        "name": name or Path(reference_image_path).stem,
-        "technique": TECHNIQUE,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-        "color": list(dominant),
-    }
-    (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+    analysis = _run_analyzers(src, out_dir)
 
-    return {**meta, "thumbnail": _to_data_url(thumb)}
+    meta = EssenceMeta(
+        id=essence_id,
+        name=name or Path(reference_image_path).stem,
+        technique=TECHNIQUE,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        color=dominant,
+        version=ESSENCE_SCHEMA_VERSION,
+        **analysis,
+    )
+    (out_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
+
+    return _meta_response(meta, thumb)
+
+
+def _meta_response(meta: EssenceMeta, thumb: Image.Image | None) -> dict:
+    """Shapes an EssenceMeta into the dict extract_essence/list_essences
+    return: flat top-level fields the frontend/shelf already consumes
+    (id/name/technique/created_at/color/version), plus a nested `analysis`
+    block for the new structured data — kept separate so old response
+    consumers are unaffected, and so raw tensors/orientation arrays never
+    leave the backend (orientation_map_path is just a filename string).
+    """
+    data = meta.model_dump()
+    analysis = {
+        "palette": data.pop("palette"),
+        "texture": data.pop("texture"),
+        "stroke": data.pop("stroke"),
+        "style_statistics": data.pop("style_statistics"),
+    }
+    return {**data, "analysis": analysis, "thumbnail": _to_data_url(thumb) if thumb else None}
 
 
 def list_essences() -> list[dict]:
@@ -173,12 +252,47 @@ def list_essences() -> list[dict]:
         meta_path = d / "meta.json"
         if not meta_path.exists():
             continue
-        meta = json.loads(meta_path.read_text())
+        # model_validate, not raw dict access — an essence saved before this
+        # schema existed has none of the new keys; every new field is
+        # Optional with a default (see essence_models.py), so it loads
+        # cleanly with analysis fields set to None rather than crashing or
+        # needing a migration.
+        meta = EssenceMeta.model_validate(json.loads(meta_path.read_text()))
         thumb_path = d / "thumbnail.png"
-        thumbnail = _to_data_url(Image.open(thumb_path)) if thumb_path.exists() else None
-        out.append({**meta, "thumbnail": thumbnail})
+        thumb = Image.open(thumb_path) if thumb_path.exists() else None
+        out.append(_meta_response(meta, thumb))
     out.sort(key=lambda e: e["created_at"], reverse=True)
     return out
+
+
+def export_debug_analysis(essence_id: str, out_dir: str | Path) -> Path:
+    """Dev-only debug export (spec Phase 21) — dumps the reference thumbnail,
+    each analyzer's JSON, the stroke visualization, and the full essence.json
+    to `out_dir` for inspection. Not wired to any user-facing endpoint;
+    call directly (e.g. from a Python shell) when verifying extraction.
+    """
+    src_dir = paths.essences_dir() / essence_id
+    if not src_dir.is_dir():
+        raise FileNotFoundError(essence_id)
+    meta = EssenceMeta.model_validate(json.loads((src_dir / "meta.json").read_text()))
+
+    dest = Path(out_dir) / essence_id
+    dest.mkdir(parents=True, exist_ok=True)
+
+    thumb_path = src_dir / "thumbnail.png"
+    if thumb_path.exists():
+        Image.open(thumb_path).convert("RGB").save(dest / "reference.jpg", quality=90)
+
+    (dest / "palette.json").write_text(meta.palette.model_dump_json(indent=2) if meta.palette else "null")
+    (dest / "texture.json").write_text(meta.texture.model_dump_json(indent=2) if meta.texture else "null")
+    (dest / "stroke.json").write_text(meta.stroke.model_dump_json(indent=2) if meta.stroke else "null")
+    (dest / "essence.json").write_text(meta.model_dump_json(indent=2))
+
+    stroke_map = src_dir / "stroke_map.png"
+    if stroke_map.exists():
+        Image.open(stroke_map).save(dest / "stroke_visualization.png")
+
+    return dest
 
 
 def _load_embedding(essence_id: str, device):
@@ -258,24 +372,32 @@ def apply_essence(
     (decoding intermediate latents during generation) are a natural
     follow-up, not yet implemented.
     """
+    t_load = time.perf_counter()
     pipe = pipeline_manager.get_pipeline_blocking()
     embeds = _load_embedding(essence_id, pipe._execution_device)
 
     target = Image.open(target_image_path)
     working = _resize_working(target)
+    print(f"[apply] load target: {(time.perf_counter() - t_load) * 1000:.0f}ms")
 
     bg_strength = strength if strength is not None else DEFAULT_STRENGTH
     bg_controlnet_scale = (
         controlnet_scale if controlnet_scale is not None else pipeline_manager.CONTROLNET_CONDITIONING_SCALE
     )
 
+    t_seg = time.perf_counter()
     mask = segmentation.get_subject_mask(working) if isolate_subject else None
     subject_detected = mask is not None
+    print(f"[apply] segmentation: {(time.perf_counter() - t_seg) * 1000:.0f}ms (subject_detected={subject_detected})")
+
     face_detected = False
     suggested_strength = suggested_controlnet_scale = None
 
     if subject_detected:
+        t_face = time.perf_counter()
         face_detected = segmentation.detect_face(working, mask)
+        print(f"[apply] face detection: {(time.perf_counter() - t_face) * 1000:.0f}ms (face_detected={face_detected})")
+
         suggested_strength, suggested_controlnet_scale = segmentation.suggest_subject_params(face_detected)
         actual_subject_strength = subject_strength if subject_strength is not None else suggested_strength
         actual_subject_controlnet_scale = (
@@ -286,13 +408,23 @@ def apply_essence(
         gen_a = torch.Generator(device=pipe._execution_device).manual_seed(seed)
         gen_b = torch.Generator(device=pipe._execution_device).manual_seed(seed)
 
+        t_a = time.perf_counter()
         pass_a = _run_generation(pipe, embeds, working, bg_strength, bg_controlnet_scale, steps, gen_a)
+        print(f"[apply] pass A (background): {time.perf_counter() - t_a:.1f}s")
+
+        t_b = time.perf_counter()
         pass_b = _run_generation(
             pipe, embeds, working, actual_subject_strength, actual_subject_controlnet_scale, steps, gen_b
         )
+        print(f"[apply] pass B (subject): {time.perf_counter() - t_b:.1f}s")
+
+        t_composite = time.perf_counter()
         final = Image.composite(pass_b, pass_a, mask)
+        print(f"[apply] composite: {(time.perf_counter() - t_composite) * 1000:.0f}ms")
     else:
+        t_single = time.perf_counter()
         final = _run_generation(pipe, embeds, working, bg_strength, bg_controlnet_scale, steps)
+        print(f"[apply] single pass: {time.perf_counter() - t_single:.1f}s")
 
     return {
         "steps": [_to_data_url(working), _to_data_url(final)],
