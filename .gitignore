@@ -39,3 +39,9 @@ Thumbs.db
 *.dmg
 *.AppImage
 *.msi
+release/
+
+# Fetched at build-prep time by scripts/fetch-embed-python.js (npm run
+# dist:prep) — a real binary Python distribution, not source, reproducible
+# from that script, never committed.
+resources/

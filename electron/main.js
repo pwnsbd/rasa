@@ -6,6 +6,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { ensureSidecarRuntime } = require('./sidecarBootstrap');
 
 const isDev = !app.isPackaged;
 const VITE_DEV_SERVER_URL = 'http://localhost:5173';
@@ -14,17 +15,29 @@ let mainWindow = null;
 let sidecarProcess = null;
 let sidecarPort = 8843; // fixed local-only port for the FastAPI sidecar (distinct from pdfToAudio's 8756 so both can run in dev)
 
-// Keep all app data — including Electron's own internal caches (GPUCache,
-// Code Cache, Session Storage, etc.) — on whichever drive the project
-// itself lives on, not wherever Electron's OS-default userData happens to
-// be (usually %APPDATA%, the C: drive on Windows). A ~11.5GB model cache
-// landing on a drive the user doesn't want it on isn't a preference to
-// leave to an env var someone has to remember every launch — it's the
-// default. Must run before any app.getPath('userData') call, hence right
-// here at module top rather than inside appDataDirs(). RASA_MODELS_DIR
-// (see appDataDirs() below) still exists as a further override for anyone
-// who wants the model cache specifically somewhere else again.
-app.setPath('userData', path.join(__dirname, '..', 'appdata'));
+// Dev-only: keep all app data — including Electron's own internal caches
+// (GPUCache, Code Cache, Session Storage, etc.) — on whichever drive the
+// project itself lives on, not wherever Electron's OS-default userData
+// happens to be (usually %APPDATA%, the C: drive on Windows). A ~11.5GB
+// model cache landing on a drive the user doesn't want it on isn't a
+// preference to leave to an env var someone has to remember every launch —
+// it's the default, for `npm run dev`. Must run before any
+// app.getPath('userData') call, hence right here at module top rather than
+// inside appDataDirs(). RASA_MODELS_DIR (see appDataDirs() below) still
+// exists as a further override for anyone who wants the model cache
+// specifically somewhere else again.
+//
+// A PACKAGED install must NOT do this: __dirname then resolves inside the
+// installed app's own resources folder (e.g. under Program Files on a
+// per-machine install), and writing an ~11.5GB model cache there means
+// every model download needs admin rights, and app data living next to the
+// binary is unusual and easy to lose on update/uninstall. Packaged builds
+// use Electron's normal per-user OS-default userData location instead —
+// exactly what it's for — with RASA_MODELS_DIR still available for anyone
+// who wants the model cache elsewhere.
+if (isDev) {
+  app.setPath('userData', path.join(__dirname, '..', 'appdata'));
+}
 
 // ---- App-data layout ----
 // models:   cached base-model weights (SDXL/InstantStyle/ControlNet) — ~11.5GB,
@@ -56,6 +69,7 @@ function createWindow() {
     minWidth: 960,
     minHeight: 640,
     backgroundColor: '#2b2233', // deep plum — avoids a white flash before the app's CSS paints
+    icon: path.join(__dirname, 'icon.png'), // taskbar/window icon while running — Windows installer icon is package.json's build.win.icon (icon.ico)
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -77,11 +91,15 @@ function createWindow() {
 }
 
 // ---- Python sidecar lifecycle ----
-// Dev: run the venv-installed `python` against sidecar/app.py.
-// Packaged: run the PyInstaller-built binary from process.resourcesPath/sidecar.
-// (No packaged build exists yet — that branch mirrors pdfToAudio's approach
-// and will be wired up once there's a pipeline worth shipping.)
-function startSidecar() {
+// Dev: run the venv-installed `python` against sidecar/app.py — unchanged,
+// this venv is built ahead of time by `npm run sidecar:setup`.
+// Packaged: no system Python assumed. First launch builds a private,
+// per-user Python runtime from the embeddable interpreter bundled into the
+// installer (see sidecarBootstrap.js + scripts/fetch-embed-python.js);
+// later launches skip straight through once that runtime already exists.
+let lastBootstrapStatus = null;
+
+async function startSidecar() {
   const dirs = appDataDirs();
 
   let cmd;
@@ -92,9 +110,15 @@ function startSidecar() {
       : path.join(__dirname, '..', 'sidecar', 'venv', 'bin', 'python');
     args = [path.join(__dirname, '..', 'sidecar', 'app.py')];
   } else {
-    const exeName = process.platform === 'win32' ? 'sidecar.exe' : 'sidecar';
-    cmd = path.join(process.resourcesPath, 'sidecar', exeName);
-    args = [];
+    cmd = await ensureSidecarRuntime({
+      userDataRoot: dirs.root,
+      resourcesPath: process.resourcesPath,
+      onProgress: (status) => {
+        lastBootstrapStatus = status;
+        mainWindow?.webContents.send('bootstrap:progress', status);
+      },
+    });
+    args = [path.join(process.resourcesPath, 'sidecar', 'app.py')];
   }
 
   sidecarProcess = spawn(cmd, args, {
@@ -144,6 +168,13 @@ ipcMain.handle('sidecar:health', async () => {
 });
 
 ipcMain.handle('app:dirs', () => appDataDirs());
+
+// The renderer mounts asynchronously and can miss earlier 'bootstrap:progress'
+// pushes (main.js starts the bootstrap before the window has finished loading
+// — see app.whenReady() below) — this lets it catch up to whatever the
+// latest status was instead of only ever seeing pushes that happen to land
+// after it's ready to listen.
+ipcMain.handle('bootstrap:currentStatus', () => lastBootstrapStatus);
 
 // Generic proxy to the local-only sidecar HTTP API — kept in the main process
 // (not called directly from the renderer) so the renderer never needs its own
@@ -208,24 +239,41 @@ ipcMain.handle('image:readAsDataUrl', async (_event, filePath) => {
   return `data:image/${mime};base64,${buf.toString('base64')}`;
 });
 
+const IMAGE_DIALOG_FILTERS = [
+  { name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'bmp', 'gif', 'tif', 'tiff'] },
+];
+
 ipcMain.handle('dialog:openImage', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Choose an image',
     properties: ['openFile'],
-    filters: [{ name: 'Image', extensions: ['png', 'jpg', 'jpeg', 'webp', 'heic', 'heif', 'bmp', 'gif', 'tif', 'tiff'] }],
+    filters: IMAGE_DIALOG_FILTERS,
   });
   if (result.canceled || result.filePaths.length === 0) return null;
   return result.filePaths[0];
+});
+
+// Multi-select variant for the Cauldron (blend/distill from several photos
+// at once) — the single-select dialog above stays untouched for every
+// other picker (Main Stage's target photo, Distillation Room's Single mode).
+ipcMain.handle('dialog:openImages', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose reference photos',
+    properties: ['openFile', 'multiSelections'],
+    filters: IMAGE_DIALOG_FILTERS,
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
 });
 
 ipcMain.handle('shell:showInFolder', (_event, filePath) => {
   shell.showItemInFolder(filePath);
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   appDataDirs();
-  startSidecar();
-  createWindow();
+  createWindow(); // first, so a packaged install's first-run bootstrap has a window to report progress into
+  await startSidecar();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

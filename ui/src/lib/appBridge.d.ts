@@ -30,15 +30,26 @@ export interface SidecarCallResult<T = unknown> {
   error?: string;
 }
 
+// First-run sidecar setup, packaged installs only — see
+// electron/sidecarBootstrap.js. `step` is a short user-facing phase label;
+// `detail` is finer-grained (e.g. a streamed pip output line), optional.
+export interface BootstrapStatus {
+  step: string;
+  detail?: string;
+}
+
 export interface AppBridge {
   getSidecarHealth: () => Promise<SidecarHealth>;
   getAppDirs: () => Promise<Record<string, string>>;
   sidecarCall: <T = unknown>(method: string, path: string, body?: unknown) => Promise<SidecarCallResult<T>>;
   getSidecarBaseUrl: () => Promise<string>;
   openImageDialog: () => Promise<string | null>;
+  openImagesDialog: () => Promise<string[]>;
   readImageAsDataUrl: (filePath: string) => Promise<string>;
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
+  onBootstrapProgress: (callback: (status: BootstrapStatus) => void) => () => void;
+  getCurrentBootstrapStatus: () => Promise<BootstrapStatus | null>;
 }
 
 declare global {
