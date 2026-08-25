@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import EssenceShelf from '../components/EssenceShelf';
-import { api, type Essence } from '../lib/api';
+import { api, type BlendMode, type Essence } from '../lib/api';
 import { rgbCss } from '../lib/color';
+import { DEFAULT_INTENSITY, STEPS_HIGH_DETAIL, STEPS_STANDARD, intensityToParams } from '../lib/styleIntensity';
 
 // Main Stage (spec §4.2.1): drag an essence bottle onto the target photo.
 // The bottle empties, glowing threads cross the space, and the photo
@@ -13,6 +14,25 @@ export default function MainStage() {
   const [baseSrc, setBaseSrc] = useState<string | null>(null);
   const [isApplying, setIsApplying] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
+  // Style intensity + quality controls (Main Stage artistic controls,
+  // previously deferred). Left at their defaults, these reproduce exactly
+  // what apply used to send with no controls at all — see
+  // lib/styleIntensity.ts.
+  const [intensity, setIntensity] = useState(DEFAULT_INTENSITY);
+  const [highDetail, setHighDetail] = useState(false);
+  // Default true: IP-Adapter's embedding carries the essence's own color
+  // along with its texture, which can otherwise tint the whole photo toward
+  // the essence's hue (reported directly against a real run — see
+  // sidecar/color_transfer.py). On restores the photo's original color;
+  // off lets the essence's color through, same as the pipeline's original
+  // behavior.
+  const [preserveColor, setPreserveColor] = useState(true);
+  // Subject (rembg+face two-pass, already validated on portraits) stays the
+  // default. Depth (continuous depth-driven two-pass — see
+  // sidecar/depth.py) is the new option for photos without one clear
+  // subject: landscapes, group shots, product shots — the kind of thing a
+  // flat filter has no way to react to at all.
+  const [blendMode, setBlendMode] = useState<BlendMode>('subject');
 
   const shelfRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -32,10 +52,23 @@ export default function MainStage() {
       stage: {
         chooseTargetPath: (path: string) => chooseTarget(path),
         applyEssenceById: (essenceId: string) => applyEssence(essenceId, window.innerWidth / 2, window.innerHeight / 2),
-        state: () => ({ targetPath, essenceCount: essences.length, isApplying, hasFinal: !!baseSrc }),
+        state: () => ({
+          targetPath,
+          essenceCount: essences.length,
+          isApplying,
+          hasFinal: !!baseSrc,
+          intensity,
+          highDetail,
+          preserveColor,
+          blendMode,
+        }),
+        setIntensity: (value: number) => setIntensity(value),
+        setHighDetail: (value: boolean) => setHighDetail(value),
+        setPreserveColor: (value: boolean) => setPreserveColor(value),
+        setBlendMode: (value: BlendMode) => setBlendMode(value),
       },
     };
-  }, [essences, targetPath, isApplying, baseSrc]);
+  }, [essences, targetPath, isApplying, baseSrc, intensity, highDetail, preserveColor, blendMode]);
 
   async function refreshEssences() {
     try {
@@ -58,6 +91,13 @@ export default function MainStage() {
   async function chooseTarget(overridePath?: string) {
     const path = overridePath ?? (await window.appBridge.openImageDialog());
     if (!path) return;
+    // crossfadeSteps leaves its last (fully-opaque) step image sitting in
+    // this layer once the animation finishes — it only clears at the start
+    // of the *next* crossfade. Without clearing it here too, picking a new
+    // photo left the previous result stacked visually on top of it. (Bug
+    // reported directly: "change photo does not remove the old photo, they
+    // stack.")
+    if (overlayRef.current) overlayRef.current.innerHTML = '';
     setTargetPath(path);
     setBaseSrc(await window.appBridge.readImageAsDataUrl(path));
   }
@@ -88,7 +128,14 @@ export default function MainStage() {
     playThreadAnimation(dropX, dropY, essence.color);
 
     try {
-      const result = await api.applyEssence(essenceId, targetPath);
+      const { strength, controlnetScale } = intensityToParams(intensity);
+      const result = await api.applyEssence(essenceId, targetPath, {
+        strength,
+        controlnetScale,
+        steps: highDetail ? STEPS_HIGH_DETAIL : STEPS_STANDARD,
+        preserveColor,
+        blendMode,
+      });
       await crossfadeSteps(result.steps);
       setBaseSrc(result.final);
     } catch (err) {
@@ -193,6 +240,64 @@ export default function MainStage() {
             >
               Change photo
             </button>
+
+            {/* Main Stage artistic controls: a single intensity slider drives
+                strength + controlnet_scale together (see lib/styleIntensity.ts)
+                rather than exposing those two raw, easy-to-misuse knobs directly. */}
+            <div className="absolute -bottom-14 left-1/2 -translate-x-1/2 flex items-center flex-wrap justify-center gap-4 bg-charcoal/90 text-ink-soft text-xs px-4 py-2 rounded-card border border-white/10 max-w-[90vw]">
+              <label className="flex items-center gap-2">
+                <span>Subtle</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={intensity}
+                  onChange={(e) => setIntensity(parseFloat(e.target.value))}
+                  className="w-28 accent-gold"
+                  aria-label="Style intensity"
+                />
+                <span>Strong</span>
+              </label>
+              <button
+                onClick={() => setHighDetail((v) => !v)}
+                className={`px-2 py-0.5 rounded-full border transition-colors ${
+                  highDetail ? 'border-gold/60 text-gold' : 'border-white/10 text-ink-soft hover:text-ink'
+                }`}
+                title="More denoising steps: crisper detail, takes longer"
+              >
+                {highDetail ? 'High detail' : 'Standard'}
+              </button>
+              <button
+                onClick={() => setPreserveColor((v) => !v)}
+                className={`px-2 py-0.5 rounded-full border transition-colors ${
+                  preserveColor ? 'border-gold/60 text-gold' : 'border-white/10 text-ink-soft hover:text-ink'
+                }`}
+                title="Keep the photo's own colors, take only texture/brushwork from the essence"
+              >
+                {preserveColor ? 'Original color' : 'Essence color'}
+              </button>
+              <div className="flex items-center gap-1 border border-white/10 rounded-full p-0.5" role="group" aria-label="Blend mode">
+                {(
+                  [
+                    { mode: 'subject' as const, label: 'Subject', title: 'Best for portraits — preserves the detected subject/face' },
+                    { mode: 'depth' as const, label: 'Depth', title: 'Best for landscapes/products — foreground stays crisp, background stylizes more with distance' },
+                    { mode: 'none' as const, label: 'Off', title: 'One flat pass over the whole photo' },
+                  ]
+                ).map(({ mode, label, title }) => (
+                  <button
+                    key={mode}
+                    onClick={() => setBlendMode(mode)}
+                    title={title}
+                    className={`px-2 py-0.5 rounded-full transition-colors ${
+                      blendMode === mode ? 'bg-gold/20 text-gold' : 'text-ink-soft hover:text-ink'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
 

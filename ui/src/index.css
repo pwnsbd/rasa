@@ -26,3 +26,20 @@
 .shimmer-sweep {
   animation: shimmer-sweep 1.4s ease-in-out infinite;
 }
+
+/* Cauldron liquid (see CauldronVessel.tsx) — a slow wobble while mixing, so
+   the vessel reads as "something is happening in here" even though the
+   color itself only changes when ingredients/weights actually change. */
+@keyframes cauldron-swirl {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  50% {
+    transform: rotate(5deg) scale(1.03);
+  }
+}
+.cauldron-swirl {
+  animation: cauldron-swirl 3.2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}

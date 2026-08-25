@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import Lightbox from '../components/Lightbox';
+import ParallaxImage from '../components/ParallaxImage';
 import { TrashIcon } from '../components/icons';
 import { api, type MediaItem } from '../lib/api';
 
@@ -38,7 +39,7 @@ export default function MediaPage() {
         {items?.map((item) => (
           <div key={item.id} className="group relative bg-surface/60 rounded-card overflow-hidden">
             <button onClick={() => setViewing(item)} title="View full size" className="block w-full">
-              <img src={item.image} alt="" className="w-full aspect-square object-cover" />
+              <ParallaxImage src={item.image} depthSrc={item.depth} fit="cover" className="w-full aspect-square" />
             </button>
             <div className="p-2.5">
               <p className="text-ink text-xs truncate">{item.essence_name}</p>
@@ -55,7 +56,9 @@ export default function MediaPage() {
         ))}
       </div>
 
-      {viewing && <Lightbox src={viewing.image} alt={viewing.essence_name} onClose={() => setViewing(null)} />}
+      {viewing && (
+        <Lightbox src={viewing.image} depthSrc={viewing.depth} alt={viewing.essence_name} onClose={() => setViewing(null)} />
+      )}
     </div>
   );
 }
