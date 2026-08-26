@@ -167,8 +167,8 @@ class ApplyRequest(BaseModel):
     depth_far_strength: float | None = None  # override for depth mode's far-camera strength (see generation.DEPTH_FAR_STRENGTH)
     depth_far_controlnet_scale: float | None = None  # override for depth mode's far-camera controlnet_scale
     preserve_color: bool = True  # restore the target's original color post-generation (see color_transfer.py); False lets the essence's own color through
-    compute_depth: bool = True  # estimate + persist a depth map for the Media Page's parallax hover effect (see depth.py); escape hatch, not a UI toggle
-    content_aware_masking: bool = True  # apply-time target-aware content suppression, on top of distillation-time purification (see content_mask.py); escape hatch, not a UI toggle
+    compute_depth: bool = False  # estimate + persist a depth map for the Media Page's parallax hover effect (see depth.py) — off by default: real, reported cost with no UI toggle to disable it
+    content_aware_masking: bool = False  # apply-time target-aware content suppression, on top of distillation-time purification (see content_mask.py) — off by default, same reasoning
 
 
 @app.post("/apply")

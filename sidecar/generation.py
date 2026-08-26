@@ -298,8 +298,8 @@ def apply_essence(
     depth_far_strength: float | None = None,
     depth_far_controlnet_scale: float | None = None,
     preserve_color: bool = True,
-    compute_depth: bool = True,
-    content_aware_masking: bool = True,
+    compute_depth: bool = False,
+    content_aware_masking: bool = False,
 ) -> dict:
     """Runs the real SDXL img2img + InstantStyle IP-Adapter + Tile ControlNet
     pipeline: the target photo is used both as the img2img init image and as
@@ -331,20 +331,29 @@ def apply_essence(
     the essence's own color untouched, same as the pipeline's original
     behavior.
 
-    compute_depth (default True): estimates a depth map for the target
-    (see depth.py) so every creation can drive the Media Page's parallax
-    hover effect, not just blend_mode="depth" ones — previously this only
-    ran inside DepthGradientStrategy. An escape hatch, not a UI toggle, for
-    anyone who wants to skip the added cost; DepthGradientStrategy still
-    computes its own if this is False but blend_mode="depth" is requested.
+    compute_depth (default False — changed from an earlier True default:
+    reported directly against a real run as a silent, un-toggleable cost —
+    the blend_mode Subject/Depth/Off selector is a *different* setting and
+    turning it to "Off"/"Subject" does nothing to this): estimates a depth
+    map for the target (see depth.py) so a creation can drive the Media
+    Page's parallax hover effect, independent of blend_mode. With the
+    default False, parallax simply won't be available unless this is
+    explicitly requested (e.g. a future UI toggle, or a direct API call) —
+    an honest trade until this earns a real switch instead of an invisible
+    tax. DepthGradientStrategy still computes its own depth map on the fly
+    when blend_mode="depth" is explicitly requested, regardless of this flag
+    — that map just doesn't get returned/persisted for parallax unless this
+    is also on.
 
-    content_aware_masking (default True): a second, complementary pass
-    against essence content leaking into generation, on top of
-    essence_store.py's distillation-time multi-crop purification — down-
-    weights embedding dimensions that correlate with the *target* photo's
-    own content (see content_mask.py; adapted from MaskST, arXiv:2502.07466,
-    substituting the target's own CLIP embedding for that paper's content
-    text prompt, since this pipeline has none). One extra, cheap CLIP encode
+    content_aware_masking (default False — same reasoning as compute_depth
+    above: a real, reported performance cost with no way to turn it off
+    short of a direct API call). A second, complementary pass against
+    essence content leaking into generation, on top of essence_store.py's
+    distillation-time multi-crop purification — down-weights embedding
+    dimensions that correlate with the *target* photo's own content (see
+    content_mask.py; adapted from MaskST, arXiv:2502.07466, substituting
+    the target's own CLIP embedding for that paper's content text prompt,
+    since this pipeline has none). One extra, cheap CLIP encode
     per apply — not a diffusion pass. Escape hatch, not a UI toggle.
     """
     t_load = time.perf_counter()

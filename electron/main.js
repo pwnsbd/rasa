@@ -179,9 +179,22 @@ ipcMain.handle('bootstrap:currentStatus', () => lastBootstrapStatus);
 // Generic proxy to the local-only sidecar HTTP API — kept in the main process
 // (not called directly from the renderer) so the renderer never needs its own
 // network access, matching the sandboxed/no-nodeIntegration webPreferences.
+// No timeout was set here at all, which meant every call fell back to
+// Node's built-in fetch (undici) default — not a value anyone chose for
+// this app, and short enough that a real /apply (first-run model download
+// on top of generation, or just a slow depth/masking pass — see recent
+// perf discussion) can trip it with a raw "fetch failed / HeadersTimeoutError"
+// that looks like a crash even when the sidecar is still working correctly.
+// This is a 127.0.0.1 call to a process this same app spawned — there's no
+// real network flakiness to guard against, so the ceiling here should come
+// from the sidecar's own already-reasoned timeouts instead: pipeline_manager.
+// get_pipeline_blocking's 1800s (first-run model download) plus real
+// generation time on top, with headroom.
+const SIDECAR_CALL_TIMEOUT_MS = 40 * 60 * 1000;
+
 ipcMain.handle('sidecar:call', async (_event, { method = 'GET', path, body } = {}) => {
   const url = `http://127.0.0.1:${sidecarPort}${path}`;
-  const opts = { method };
+  const opts = { method, signal: AbortSignal.timeout(SIDECAR_CALL_TIMEOUT_MS) };
   if (body !== undefined) {
     opts.headers = { 'Content-Type': 'application/json' };
     opts.body = JSON.stringify(body);
