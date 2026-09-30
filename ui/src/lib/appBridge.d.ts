@@ -35,6 +35,7 @@ export interface SidecarCallResult<T = unknown> {
 // `detail` is finer-grained (e.g. a streamed pip output line), optional.
 export interface BootstrapStatus {
   step: string;
+  error?: boolean;
   detail?: string;
 }
 
@@ -49,6 +50,7 @@ export interface AppBridge {
   getPathForFile: (file: File) => string;
   showInFolder: (filePath: string) => Promise<void>;
   onBootstrapProgress: (callback: (status: BootstrapStatus) => void) => () => void;
+  retryBootstrap: () => Promise<void>;
   getCurrentBootstrapStatus: () => Promise<BootstrapStatus | null>;
 }
 

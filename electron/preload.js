@@ -33,5 +33,6 @@ contextBridge.exposeInMainWorld('appBridge', {
     ipcRenderer.on('bootstrap:progress', listener);
     return () => ipcRenderer.removeListener('bootstrap:progress', listener);
   },
+  retryBootstrap: () => ipcRenderer.invoke('bootstrap:retry'),
   getCurrentBootstrapStatus: () => ipcRenderer.invoke('bootstrap:currentStatus'),
 });

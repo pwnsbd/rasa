@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Lightbox from '../components/Lightbox';
 import ParallaxImage from '../components/ParallaxImage';
-import { TrashIcon } from '../components/icons';
+import { SunIcon, TrashIcon } from '../components/icons';
 import { api, type MediaItem } from '../lib/api';
 
 // Media Page (spec §4.2.3): every finished creation is saved automatically —
@@ -10,6 +10,8 @@ import { api, type MediaItem } from '../lib/api';
 export default function MediaPage() {
   const [items, setItems] = useState<MediaItem[] | null>(null);
   const [viewing, setViewing] = useState<MediaItem | null>(null);
+  const [animatingIds, setAnimatingIds] = useState<Set<string>>(new Set());
+  const [status, setStatus] = useState<{ text: string; gifPath?: string } | null>(null);
 
   useEffect(() => {
     api
@@ -25,6 +27,26 @@ export default function MediaPage() {
       setItems((prev) => prev?.filter((i) => i.id !== item.id) ?? prev);
     } catch {
       // best-effort — leave the item in place so the user can retry
+    }
+  }
+
+  async function handleAnimate(item: MediaItem) {
+    if (animatingIds.has(item.id)) return;
+    setAnimatingIds((prev) => new Set(prev).add(item.id));
+    setStatus({ text: `Animating "${item.essence_name}"…` });
+    try {
+      const result = await api.generateGif(item.id);
+      setItems((prev) => prev?.map((i) => (i.id === item.id ? { ...i, has_gif: true } : i)) ?? prev);
+      setStatus({ text: 'GIF ready.', gifPath: result.gif_path });
+    } catch (err) {
+      setStatus({ text: err instanceof Error ? err.message : 'Animation failed.' });
+      setTimeout(() => setStatus(null), 3000);
+    } finally {
+      setAnimatingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
     }
   }
 
@@ -52,12 +74,42 @@ export default function MediaPage() {
             >
               <TrashIcon className="w-3.5 h-3.5" />
             </button>
+            <button
+              onClick={() => handleAnimate(item)}
+              disabled={animatingIds.has(item.id)}
+              title={item.has_gif ? 'Re-animate (sweeping-light GIF)' : 'Animate (sweeping-light GIF)'}
+              className={`absolute top-2 left-2 w-7 h-7 rounded-full bg-charcoal/90 border flex items-center justify-center transition-colors ${
+                item.has_gif ? 'border-gold/60 text-gold opacity-100' : 'border-white/10 text-ink-soft opacity-0 group-hover:opacity-100'
+              } ${animatingIds.has(item.id) ? 'animate-pulse' : 'hover:text-gold hover:border-gold/40'}`}
+            >
+              <SunIcon className="w-3.5 h-3.5" />
+            </button>
           </div>
         ))}
       </div>
 
       {viewing && (
         <Lightbox src={viewing.image} depthSrc={viewing.depth} alt={viewing.essence_name} onClose={() => setViewing(null)} />
+      )}
+
+      {status && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-charcoal/90 text-ink-soft text-sm px-4 py-2 rounded-full border border-white/10 flex items-center gap-3 z-40">
+          <span>{status.text}</span>
+          {status.gifPath && (
+            <button
+              onClick={() => {
+                window.appBridge.showInFolder(status.gifPath!);
+                setStatus(null);
+              }}
+              className="text-gold hover:underline"
+            >
+              Show in folder
+            </button>
+          )}
+          <button onClick={() => setStatus(null)} className="text-ink-soft hover:text-ink">
+            ✕
+          </button>
+        </div>
       )}
     </div>
   );

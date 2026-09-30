@@ -83,6 +83,21 @@ def _render_orientation_field(base: Image.Image, theta: np.ndarray, coherence: n
 
 
 def analyze_stroke(image: Image.Image) -> tuple[StrokeProfile, Image.Image]:
+    """Thin wrapper over analyze_stroke_field for the common case that only
+    wants the scalar profile + debug visualization, not the raw per-cell
+    field — keeps this function's existing signature/tests untouched.
+    """
+    profile, viz, _theta, _coherence = analyze_stroke_field(image)
+    return profile, viz
+
+
+def analyze_stroke_field(image: Image.Image) -> tuple[StrokeProfile, Image.Image, np.ndarray, np.ndarray]:
+    """Same analysis as analyze_stroke, plus the raw (theta, coherence) grids
+    behind it — essence_store.py persists these (see stroke_field.npz) so
+    generation-time code (stroke_texture.py) can apply a spatially-varying
+    effect oriented to the essence's own measured stroke pattern, not just
+    react to the four aggregate scalars.
+    """
     img = analysis_resize(image)
     gray = to_gray_array(img)
     theta, coherence, magnitude = _cell_orientation_field(gray)
@@ -99,6 +114,13 @@ def analyze_stroke(image: Image.Image) -> tuple[StrokeProfile, Image.Image]:
     vx = float((np.cos(2 * theta) * weights).mean())
     vy = float((np.sin(2 * theta) * weights).mean())
     directionality = float(np.clip(np.hypot(vx, vy) / (weights.mean() + 1e-8), 0.0, 1.0))
+    # The aggregate vector's own angle (halved back out of doubled-angle
+    # space) is the essence's dominant stroke axis — only meaningful once
+    # directionality clears a floor; below that, cells disagree enough that
+    # "the" axis is noise, so this stays None (same honesty as
+    # style_statistics.abstraction being left unimplemented rather than
+    # fabricated).
+    dominant_angle = float(0.5 * np.arctan2(vy, vx)) if directionality > 0.15 else None
 
     # Global coherence: mean of per-cell coherence — "how confidently
     # oriented is each mark", independent of whether marks *agree* with
@@ -130,6 +152,8 @@ def analyze_stroke(image: Image.Image) -> tuple[StrokeProfile, Image.Image]:
         curvature=round(curvature, 4),
         coherence=round(global_coherence, 4),
         density=round(density, 4),
+        dominant_angle=round(dominant_angle, 4) if dominant_angle is not None else None,
         orientation_map_path=None,  # filled in by essence_store.py once it knows the essence_id/output path
+        field_path=None,  # filled in by essence_store.py once it knows the essence_id/output path
     )
-    return profile, viz
+    return profile, viz, theta, coherence

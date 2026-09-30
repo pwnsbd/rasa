@@ -47,7 +47,9 @@ class StrokeProfile(BaseModel):
     curvature: float
     coherence: float  # how consistent the local orientation is across the image
     density: float
+    dominant_angle: float | None = None  # radians, (-pi/2, pi/2] — the essence's aggregate stroke axis; None if directionality is too low for one to be meaningful (see stroke.py)
     orientation_map_path: str | None = None  # relative filename of the debug visualization, if one was saved
+    field_path: str | None = None  # relative filename of the raw per-cell orientation field (.npz: theta, coherence) — see generation.py's stroke_texture module; None for an essence saved before this existed
 
 
 class StyleStatistics(BaseModel):

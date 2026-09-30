@@ -18,6 +18,13 @@ experiments (a palette-guided pass — explicitly future work, not started)
 add a new class here instead of another branch in apply_essence.
 apply_essence itself just picks a strategy and shapes its result into the
 API response.
+
+apply_essence's `mode` param picks between this whole diffusion pipeline
+("restyle", the default) and a second, entirely non-diffusion apply engine
+("texture_overlay" — see texture_overlay.py) for essences that are really
+a material (glass, canvas, paper grain) rather than a painterly style,
+where regenerating the image via diffusion only introduces unwanted
+content drift a classical bump/emboss overlay doesn't have.
 """
 from __future__ import annotations
 
@@ -35,6 +42,8 @@ import depth
 import essence_store
 import pipeline_manager
 import segmentation
+import stroke_texture
+import texture_overlay
 from imaging import to_data_url
 
 WORKING_MAX_DIM = 1024  # SDXL's native resolution; img2img input is resized to this
@@ -297,9 +306,12 @@ def apply_essence(
     depth_near_controlnet_scale: float | None = None,
     depth_far_strength: float | None = None,
     depth_far_controlnet_scale: float | None = None,
-    preserve_color: bool = True,
+    color_preservation: float = 1.0,
+    stroke_amount: float = 0.0,
     compute_depth: bool = False,
     content_aware_masking: bool = False,
+    mode: str = "restyle",
+    texture_overlay_amount: float = 1.0,
 ) -> dict:
     """Runs the real SDXL img2img + InstantStyle IP-Adapter + Tile ControlNet
     pipeline: the target photo is used both as the img2img init image and as
@@ -324,12 +336,24 @@ def apply_essence(
     see DepthGradientStrategy/depth.py), or "none" (flat single pass).
     Any unrecognized value falls back to "subject", the existing default.
 
-    preserve_color (default True — reported directly against a real run
-    where a strongly-colored essence tinted the whole photo toward its hue):
-    restores the target's original color post-generation, keeping only the
-    stylized result's luminance/texture. See color_transfer.py. False uses
-    the essence's own color untouched, same as the pipeline's original
-    behavior.
+    color_preservation (0..1, default 1.0 — reported directly against a
+    real run where a strongly-colored essence tinted the whole photo toward
+    its hue): how much of the target's original color to restore
+    post-generation, keeping only the stylized result's luminance/texture
+    at the high end. See color_transfer.py. 1.0 is the pipeline's original
+    all-or-nothing "on" behavior; 0.0 lets the essence's own color through
+    untouched (the original "off"); values between are a continuous blend.
+
+    stroke_amount (0..1, default 0.0 — new and not yet validated against a
+    real photo the way color_preservation was, so it defaults off): overlays
+    a faint directional grain post-generation, oriented per-region to the
+    essence's own measured stroke pattern (see stroke_texture.py) rather
+    than applying the same adjustment everywhere the way every control above
+    this one does. Silently a no-op when the essence has no persisted
+    stroke field — a blended (Cauldron) Essence, one saved before this
+    existed, or one whose stroke analysis failed at Distillation time (see
+    essence_store.py's _run_analyzers) — same "missing analysis just means
+    no effect" honesty as everywhere else this data is optional.
 
     compute_depth (default False — changed from an earlier True default:
     reported directly against a real run as a silent, un-toggleable cost —
@@ -355,7 +379,46 @@ def apply_essence(
     the target's own CLIP embedding for that paper's content text prompt,
     since this pipeline has none). One extra, cheap CLIP encode
     per apply — not a diffusion pass. Escape hatch, not a UI toggle.
+
+    mode ("restyle", the default, or "texture_overlay"): picks which of two
+    entirely different apply *engines* runs, not another blend of the same
+    one. "restyle" is everything above this paragraph — the real diffusion
+    pipeline. "texture_overlay" skips the pipeline (and the model-readiness
+    requirement — see app.py's apply_endpoint) entirely and instead
+    composites the essence's own persisted texture swatch onto the target
+    as a classical bump/emboss overlay (see texture_overlay.py), preserving
+    the target's content with total fidelity — the right tool for an
+    essence that's really a *material* (glass, canvas, paper grain) rather
+    than a painterly style, where diffusion regeneration only introduces
+    unwanted content drift. Every strength/blend_mode/color_preservation/
+    stroke_amount param above is ignored in this mode. Raises ValueError if
+    the essence has no persisted texture source (a blended Essence, or one
+    saved before this existed).
+
+    texture_overlay_amount (0..1, default 1.0, only used when mode ==
+    "texture_overlay"): how strong the overlay reads — 0.0 leaves the
+    target untouched, 1.0 is the full effect. See texture_overlay.py.
     """
+    if mode == "texture_overlay":
+        texture = essence_store.load_texture_source(essence_id)
+        if texture is None:
+            raise ValueError(
+                f"Essence {essence_id} has no texture source (a blended Essence, or one saved before this existed) "
+                "-- texture_overlay mode needs one"
+            )
+        target = Image.open(target_image_path)
+        working = _resize_working(target)
+        final = texture_overlay.apply_texture_overlay(working, texture, amount=texture_overlay_amount)
+        return {
+            "steps": [to_data_url(working), to_data_url(final)],
+            "final": to_data_url(final),
+            "depth_map": None,
+            "subject_detected": False,
+            "face_detected": False,
+            "suggested_subject_strength": None,
+            "suggested_subject_controlnet_scale": None,
+        }
+
     t_load = time.perf_counter()
     pipe = pipeline_manager.get_pipeline_blocking()
     embeds = essence_store.load_embedding(essence_id, pipe._execution_device)
@@ -398,10 +461,18 @@ def apply_essence(
     result = strategy.run(pipe, embeds, working, steps)
 
     final = result.final
-    if preserve_color:
+    if color_preservation > 0.0:
         t_color = time.perf_counter()
-        final = color_transfer.preserve_original_color(final, working)
-        print(f"[apply] preserve_color: {(time.perf_counter() - t_color) * 1000:.0f}ms")
+        final = color_transfer.preserve_original_color(final, working, amount=color_preservation)
+        print(f"[apply] color_preservation={color_preservation:.2f}: {(time.perf_counter() - t_color) * 1000:.0f}ms")
+
+    if stroke_amount > 0.0:
+        stroke_field = essence_store.load_stroke_field(essence_id)
+        if stroke_field is not None:
+            t_stroke = time.perf_counter()
+            theta, coherence = stroke_field
+            final = stroke_texture.apply_stroke_texture(final, theta, coherence, amount=stroke_amount)
+            print(f"[apply] stroke_amount={stroke_amount:.2f}: {(time.perf_counter() - t_stroke) * 1000:.0f}ms")
 
     return {
         "steps": [to_data_url(working), to_data_url(final)],

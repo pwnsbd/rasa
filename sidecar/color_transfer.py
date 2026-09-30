@@ -29,14 +29,25 @@ from PIL import Image
 from skimage.color import lab2rgb, rgb2lab
 
 
-def preserve_original_color(stylized: Image.Image, original: Image.Image) -> Image.Image:
-    """Returns a copy of `stylized` with its color replaced by `original`'s.
-    Both images must be the same size — true for every call site today
-    (generation.py always calls this with the working-resolution target and
-    the same-resolution generation output).
+def preserve_original_color(stylized: Image.Image, original: Image.Image, amount: float = 1.0) -> Image.Image:
+    """Returns a copy of `stylized` with its color pulled back toward
+    `original`'s by `amount` (0..1). Both images must be the same size —
+    true for every call site today (generation.py always calls this with
+    the working-resolution target and the same-resolution generation
+    output).
+
+    amount=1.0 (the original, only behavior) fully swaps in the original's
+    a/b chroma, same as before this parameter existed. amount=0.0 is a
+    no-op — the essence's own color comes through untouched. Values between
+    are a straight per-channel lerp of the LAB a/b planes, giving a
+    continuous "how much of the essence's color to let through" control
+    instead of the previous all-or-nothing toggle.
     """
     if stylized.size != original.size:
         raise ValueError(f"size mismatch: stylized={stylized.size} original={original.size}")
+    amount = min(1.0, max(0.0, amount))
+    if amount == 0.0:
+        return stylized.convert("RGB").copy()
 
     stylized_arr = np.asarray(stylized.convert("RGB"), dtype=np.float64) / 255.0
     original_arr = np.asarray(original.convert("RGB"), dtype=np.float64) / 255.0
@@ -44,8 +55,8 @@ def preserve_original_color(stylized: Image.Image, original: Image.Image) -> Ima
     stylized_lab = rgb2lab(stylized_arr)
     original_lab = rgb2lab(original_arr)
 
-    combined_lab = np.stack(
-        [stylized_lab[..., 0], original_lab[..., 1], original_lab[..., 2]], axis=-1
-    )
+    a = stylized_lab[..., 1] + amount * (original_lab[..., 1] - stylized_lab[..., 1])
+    b = stylized_lab[..., 2] + amount * (original_lab[..., 2] - stylized_lab[..., 2])
+    combined_lab = np.stack([stylized_lab[..., 0], a, b], axis=-1)
     rgb = np.clip(lab2rgb(combined_lab), 0.0, 1.0)
     return Image.fromarray((rgb * 255).round().astype(np.uint8))

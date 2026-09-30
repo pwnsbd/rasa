@@ -18,3 +18,10 @@ def to_data_url(img: Image.Image, fmt: str = "PNG") -> str:
     img.save(buf, format=fmt)
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:image/{fmt.lower()};base64,{b64}"
+
+
+def bytes_to_data_url(data: bytes, fmt: str) -> str:
+    """Same idea as to_data_url, for callers that already have encoded
+    bytes (e.g. relight.py's GIF output) rather than a PIL Image to encode."""
+    b64 = base64.b64encode(data).decode("ascii")
+    return f"data:image/{fmt.lower()};base64,{b64}"

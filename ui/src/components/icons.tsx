@@ -61,6 +61,18 @@ export function TrashIcon(props: { className?: string }) {
   );
 }
 
+// Relight GIF export (sidecar/relight.py) — a sun rather than a generic
+// sparkle, since the feature is specifically about a sweeping light, not a
+// vague "magic" gesture.
+export function SunIcon(props: { className?: string }) {
+  return (
+    <svg {...base} className={props.className}>
+      <circle cx="12" cy="12" r="4" />
+      <path d="M12 3v2.2M12 18.8V21M21 12h-2.2M5.2 12H3M18.4 5.6l-1.5 1.5M7.1 16.9l-1.5 1.5M18.4 18.4l-1.5-1.5M7.1 7.1 5.6 5.6" />
+    </svg>
+  );
+}
+
 export function BottleBadge(props: { color: [number, number, number]; size?: number }) {
   const { color, size = 18 } = props;
   return (
@@ -77,6 +89,15 @@ export function BottleBadge(props: { color: [number, number, number]; size?: num
         fill={`rgb(${color[0]}, ${color[1]}, ${color[2]})`}
         opacity="0.9"
       />
+    </svg>
+  );
+}
+
+export function DownloadIcon(props: { className?: string }) {
+  return (
+    <svg {...base} className={props.className}>
+      <path d="M12 4v11m0 0-4-4m4 4 4-4" />
+      <path d="M5 19h14" />
     </svg>
   );
 }

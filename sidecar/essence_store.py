@@ -18,13 +18,24 @@ essence_models.py):
                                 actual style transfer
         stroke_map.png         stroke orientation-field debug visualization,
                                 when stroke analysis succeeded
+        stroke_field.npz       raw per-cell (theta, coherence) grid behind
+                                that visualization — consumed at apply time
+                                by generation.py's stroke_texture module,
+                                when stroke analysis succeeded
+        texture_source.png     tileable material swatch (a resize of the
+                                reference, not a full copy) — consumed at
+                                apply time by generation.py's
+                                texture_overlay module, for essences
+                                extracted since that existed
 
 Structured analysis (palette/texture/stroke/style_statistics) is
 Distillation-time only: computed once in extract_essence below, saved to
-meta.json, and never recomputed — generation.py's apply_essence loads the
-embedding and does not touch style_analysis/ at all. None of it feeds
-generation yet (spec's own explicit sequencing: verify extraction before
-deciding how it influences diffusion).
+meta.json, and never recomputed — apply_essence never calls back into
+style_analysis/. Two apply-time controls (stroke_texture.py,
+texture_overlay.py) do read the raw files above directly (the stroke field,
+the texture swatch), but neither touches the four *scalar* profiles
+themselves — those still don't drive generation (spec's own explicit
+sequencing: verify extraction before deciding how it influences diffusion).
 
 blend_essences (the Cauldron) is a second way to create an Essence —
 distilling one from a weighted mix of other Essences and/or fresh reference
@@ -68,15 +79,18 @@ import paths
 import pipeline_manager
 from essence_models import BlendIngredientInfo, EssenceMeta
 from imaging import to_data_url
+import numpy as np
+
 from style_analysis.palette import extract_palette
 from style_analysis.statistics import analyze_style_statistics
-from style_analysis.stroke import analyze_stroke
+from style_analysis.stroke import analyze_stroke_field
 from style_analysis.texture import analyze_texture
 
 TECHNIQUE = "instantstyle-sdxl-controlnet-v1"
 BLEND_TECHNIQUE = "instantstyle-sdxl-controlnet-v1-blend"  # the Cauldron (blend_essences) — see its docstring
 ESSENCE_SCHEMA_VERSION = 2
 THUMBNAIL_SIZE = (160, 160)
+TEXTURE_SOURCE_MAX_DIM = 512  # tileable material swatch for texture_overlay.py — see extract_essence
 PREVIEW_MAX_DIM = 1600  # generous — this is a display preview, not the working-resolution copy generation.py uses
 
 # Multi-crop style purification (see module docstring). NUM_PURIFICATION_CROPS
@@ -160,9 +174,16 @@ def _run_analyzers(src: Image.Image, out_dir: Path) -> dict:
 
     start = time.perf_counter()
     try:
-        stroke_profile, stroke_viz = analyze_stroke(src)
+        stroke_profile, stroke_viz, theta, coherence = analyze_stroke_field(src)
         stroke_viz.save(out_dir / "stroke_map.png")
         stroke_profile.orientation_map_path = "stroke_map.png"
+        # Raw per-cell field, not just the four aggregate scalars above —
+        # small (GRID_SIZE^2 floats each, a few KB compressed) — so
+        # generation-time code (stroke_texture.py) can apply an effect that
+        # actually varies across the image the way the essence's own strokes
+        # did, instead of reacting to one flat number for the whole photo.
+        np.savez_compressed(out_dir / "stroke_field.npz", theta=theta, coherence=coherence)
+        stroke_profile.field_path = "stroke_field.npz"
         results["stroke"] = stroke_profile
         print(f"[essence] stroke: {(time.perf_counter() - start) * 1000:.0f}ms")
     except Exception as e:  # noqa: BLE001
@@ -289,6 +310,18 @@ def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
     thumb.thumbnail(THUMBNAIL_SIZE)
     thumb.save(out_dir / "thumbnail.png")
 
+    # A tileable material swatch for the classical (non-diffusion) texture-
+    # overlay apply path (see texture_overlay.py) — bigger than the display
+    # thumbnail above so tiled relief detail doesn't read as blurry, but
+    # still just a resize of the same reference, not a full-res copy. Always
+    # saved (cheap, can't fail the way the try/excepted analyzers below
+    # can) for every singly-extracted Essence; blend_essences below doesn't
+    # write one, same as it doesn't run the analyzers — no single reference
+    # to derive a swatch or a style from.
+    texture_source = src.convert("RGB").copy()
+    texture_source.thumbnail((TEXTURE_SOURCE_MAX_DIM, TEXTURE_SOURCE_MAX_DIM))
+    texture_source.save(out_dir / "texture_source.png")
+
     # Moved to CPU before saving — safetensors needs a portable on-disk
     # format regardless of which device extracted it (also lets
     # load_embedding pick the right device back up at apply time).
@@ -309,16 +342,21 @@ def extract_essence(reference_image_path: str, name: str | None = None) -> dict:
     )
     (out_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
 
-    return _meta_response(meta, thumb)
+    return _meta_response(meta, thumb, out_dir)
 
 
-def _meta_response(meta: EssenceMeta, thumb: Image.Image | None) -> dict:
+def _meta_response(meta: EssenceMeta, thumb: Image.Image | None, essence_dir: Path) -> dict:
     """Shapes an EssenceMeta into the dict extract_essence/list_essences
     return: flat top-level fields the frontend/shelf already consumes
     (id/name/technique/created_at/color/version), plus a nested `analysis`
     block for the new structured data — kept separate so old response
     consumers are unaffected, and so raw tensors/orientation arrays never
     leave the backend (orientation_map_path is just a filename string).
+
+    has_texture_source is a plain file-existence check, same pattern as
+    media.py's has_gif — not part of EssenceMeta/meta.json, since it's a
+    derived fact about what's on disk (a blend, or a pre-existing essence,
+    just won't have the file) rather than analysis data to persist.
     """
     data = meta.model_dump()
     analysis = {
@@ -327,7 +365,12 @@ def _meta_response(meta: EssenceMeta, thumb: Image.Image | None) -> dict:
         "stroke": data.pop("stroke"),
         "style_statistics": data.pop("style_statistics"),
     }
-    return {**data, "analysis": analysis, "thumbnail": to_data_url(thumb) if thumb else None}
+    return {
+        **data,
+        "analysis": analysis,
+        "thumbnail": to_data_url(thumb) if thumb else None,
+        "has_texture_source": (essence_dir / "texture_source.png").exists(),
+    }
 
 
 def list_essences() -> list[dict]:
@@ -345,7 +388,7 @@ def list_essences() -> list[dict]:
         meta = EssenceMeta.model_validate(json.loads(meta_path.read_text()))
         thumb_path = d / "thumbnail.png"
         thumb = Image.open(thumb_path) if thumb_path.exists() else None
-        out.append(_meta_response(meta, thumb))
+        out.append(_meta_response(meta, thumb, d))
     out.sort(key=lambda e: e["created_at"], reverse=True)
     return out
 
@@ -389,6 +432,35 @@ def load_embedding(essence_id: str, device):
         raise FileNotFoundError(essence_id)
     tensors = load_file(path, device=str(device))
     return [tensors["ip_adapter_embed"]]
+
+
+def load_stroke_field(essence_id: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """Used by generation.py's stroke_texture module at apply time. Returns
+    (theta, coherence) — the raw per-cell field saved by _run_analyzers — or
+    None for an essence with no stroke_field.npz: stroke analysis can fail
+    independently (see _run_analyzers), a blended Essence never has one, and
+    neither does an essence saved before this existed. Callers treat None as
+    "no stroke effect available for this essence", not an error.
+    """
+    path = paths.essences_dir() / essence_id / "stroke_field.npz"
+    if not path.exists():
+        return None
+    data = np.load(path)
+    return data["theta"], data["coherence"]
+
+
+def load_texture_source(essence_id: str) -> Image.Image | None:
+    """Used by generation.py's texture_overlay module at apply time. Returns
+    the tileable material swatch saved by extract_essence, or None for an
+    essence with no texture_source.png: a blended Essence never has one (no
+    single reference to derive a swatch from), and neither does an essence
+    saved before this existed. Callers treat None as "texture_overlay mode
+    isn't available for this essence", not an error.
+    """
+    path = paths.essences_dir() / essence_id / "texture_source.png"
+    if not path.exists():
+        return None
+    return Image.open(path).convert("RGB")
 
 
 def _blend_colors(colors: list[tuple[int, int, int]], weights: list[float]) -> tuple[int, int, int]:
@@ -542,7 +614,7 @@ def blend_essences(ingredients: list[dict], name: str | None = None) -> dict:
     )
     (out_dir / "meta.json").write_text(meta.model_dump_json(indent=2))
 
-    return _meta_response(meta, blended_thumb)
+    return _meta_response(meta, blended_thumb, out_dir)
 
 
 def delete_essence(essence_id: str) -> None:

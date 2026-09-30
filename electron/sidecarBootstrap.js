@@ -22,6 +22,7 @@ const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
+const crypto = require('crypto');
 const READY_MARKER = '.rasa-runtime-ready';
 
 function runtimeDir(userDataRoot) {
@@ -51,7 +52,7 @@ function copyRecursive(src, dest) {
 
 function hasNvidiaGpu() {
   try {
-    execSync('nvidia-smi', { stdio: 'ignore' });
+    execSync('nvidia-smi', { stdio: 'ignore', windowsHide: true, timeout: 10000 });
     return true;
   } catch {
     return false;
@@ -62,9 +63,14 @@ function hasNvidiaGpu() {
 // renderer-facing status text) instead of inheriting stdio the way
 // scripts/setup-sidecar.js's dev-only equivalent does — this runs inside
 // the packaged app, not a terminal a developer is watching.
+const setupChildren = new Set();
+function cancelSetup() { for (const child of setupChildren) child.kill(); }
+
 function run(cmd, args, onProgress) {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { windowsHide: true });
+    setupChildren.add(child);
+    child.once('close', () => setupChildren.delete(child));
     child.stdout.on('data', (d) => onProgress?.(d.toString()));
     child.stderr.on('data', (d) => onProgress?.(d.toString()));
     child.on('error', reject);
@@ -106,7 +112,9 @@ async function ensureSidecarRuntime({ userDataRoot, resourcesPath, onProgress })
   const python = runtimePython(userDataRoot);
   const report = (step, detail) => onProgress?.({ step, detail });
 
-  if (isReady(userDataRoot) && fs.existsSync(python)) {
+  const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'requirements.txt'))).update(fs.readFileSync(__filename)).digest('hex');
+  const marker = path.join(dir, READY_MARKER);
+  if (isReady(userDataRoot) && fs.existsSync(python) && fs.readFileSync(marker, 'utf8') === fingerprint) {
     return python;
   }
 
@@ -131,9 +139,9 @@ async function ensureSidecarRuntime({ userDataRoot, resourcesPath, onProgress })
   report('Setting up Rasa for the first time…', gpu ? 'Installing GPU (CUDA) support' : 'Installing CPU support (no GPU detected — generation will be slow)');
   await installTorch(python, gpu, (line) => report('Setting up Rasa for the first time…', line.trim() || undefined));
 
-  fs.writeFileSync(path.join(dir, READY_MARKER), new Date().toISOString());
+  fs.writeFileSync(path.join(dir, READY_MARKER), fingerprint);
   report('Setup complete');
   return python;
 }
 
-module.exports = { ensureSidecarRuntime, isReady, runtimePython, runtimeDir };
+module.exports = { cancelSetup, ensureSidecarRuntime, isReady, runtimePython, runtimeDir };

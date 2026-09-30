@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import EssenceShelf from '../components/EssenceShelf';
-import { api, type BlendMode, type Essence } from '../lib/api';
+import { api, type ApplyMode, type BlendMode, type Essence } from '../lib/api';
 import { rgbCss } from '../lib/color';
-import { DEFAULT_INTENSITY, STEPS_HIGH_DETAIL, STEPS_STANDARD, intensityToParams } from '../lib/styleIntensity';
+import { DEFAULT_INTENSITY, STEPS_HIGH_DETAIL, STEPS_STANDARD, intensityToParams, suggestIntensity } from '../lib/styleIntensity';
 
 // Main Stage (spec §4.2.1): drag an essence bottle onto the target photo.
 // The bottle empties, glowing threads cross the space, and the photo
@@ -19,20 +19,51 @@ export default function MainStage() {
   // what apply used to send with no controls at all — see
   // lib/styleIntensity.ts.
   const [intensity, setIntensity] = useState(DEFAULT_INTENSITY);
+  // True once the user has dragged the intensity slider themselves. Until
+  // then, applyEssence picks a per-essence suggested starting point (see
+  // lib/styleIntensity.ts's suggestIntensity) instead of one flat default
+  // for every essence — same "suggested, but overridable" pattern as
+  // segmentation.py's suggest_subject_params. Any manual drag becomes a
+  // fixed choice that applies to every essence from then on, matching what
+  // the visible slider position promises.
+  const [intensityTouched, setIntensityTouched] = useState(false);
   const [highDetail, setHighDetail] = useState(false);
-  // Default true: IP-Adapter's embedding carries the essence's own color
-  // along with its texture, which can otherwise tint the whole photo toward
-  // the essence's hue (reported directly against a real run — see
-  // sidecar/color_transfer.py). On restores the photo's original color;
-  // off lets the essence's color through, same as the pipeline's original
-  // behavior.
-  const [preserveColor, setPreserveColor] = useState(true);
+  // 0..1, default 1.0 (full restore): IP-Adapter's embedding carries the
+  // essence's own color along with its texture, which can otherwise tint
+  // the whole photo toward the essence's hue (reported directly against a
+  // real run — see sidecar/color_transfer.py). 1.0 restores the photo's
+  // original color fully; 0.0 lets the essence's color through untouched,
+  // same as the pipeline's original behavior; values between are a real
+  // blend instead of an on/off toggle.
+  const [colorPreservation, setColorPreservation] = useState(1.0);
+  // 0..1, default 0.0 (off): overlays a faint directional grain oriented to
+  // the essence's own measured stroke pattern (see sidecar/stroke_texture.py)
+  // — the first control that reacts to which *specific* essence was
+  // dropped rather than applying the same adjustment to every essence
+  // alike. New and not yet validated against a real photo the way
+  // colorPreservation was, so it stays off until a user opts in; a silent
+  // no-op for essences with no detected stroke field (blended essences,
+  // ones saved before this existed, or failed stroke analysis).
+  const [strokeAmount, setStrokeAmount] = useState(0);
   // Subject (rembg+face two-pass, already validated on portraits) stays the
   // default. Depth (continuous depth-driven two-pass — see
   // sidecar/depth.py) is the new option for photos without one clear
   // subject: landscapes, group shots, product shots — the kind of thing a
   // flat filter has no way to react to at all.
   const [blendMode, setBlendMode] = useState<BlendMode>('subject');
+  // "restyle" (default): the SDXL diffusion pipeline above -- everything
+  // this screen did before. "texture_overlay": a second, non-diffusion
+  // engine (see sidecar/texture_overlay.py) that composites the essence's
+  // own material swatch onto the target via classical bump/emboss shading
+  // instead of regenerating the photo -- the right tool for an essence
+  // that's really a material (glass, canvas, paper grain) rather than a
+  // painterly style, where diffusion only drifts the target's content away
+  // from what it actually was. Every restyle control above is ignored by
+  // the sidecar in this mode (see generation.apply_essence's docstring);
+  // errors (e.g. dropping it on an essence with no saved material swatch)
+  // surface through the same status toast as any other apply failure.
+  const [mode, setMode] = useState<ApplyMode>('restyle');
+  const [textureOverlayAmount, setTextureOverlayAmount] = useState(1.0);
 
   const shelfRef = useRef<HTMLDivElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -58,17 +89,40 @@ export default function MainStage() {
           isApplying,
           hasFinal: !!baseSrc,
           intensity,
+          intensityTouched,
           highDetail,
-          preserveColor,
+          colorPreservation,
+          strokeAmount,
           blendMode,
+          mode,
+          textureOverlayAmount,
         }),
-        setIntensity: (value: number) => setIntensity(value),
+        setIntensity: (value: number) => {
+          setIntensityTouched(true);
+          setIntensity(value);
+        },
         setHighDetail: (value: boolean) => setHighDetail(value),
-        setPreserveColor: (value: boolean) => setPreserveColor(value),
+        setColorPreservation: (value: number) => setColorPreservation(value),
+        setStrokeAmount: (value: number) => setStrokeAmount(value),
         setBlendMode: (value: BlendMode) => setBlendMode(value),
+        setMode: (value: ApplyMode) => setMode(value),
+        setTextureOverlayAmount: (value: number) => setTextureOverlayAmount(value),
       },
     };
-  }, [essences, targetPath, isApplying, baseSrc, intensity, highDetail, preserveColor, blendMode]);
+  }, [
+    essences,
+    targetPath,
+    isApplying,
+    baseSrc,
+    intensity,
+    intensityTouched,
+    highDetail,
+    colorPreservation,
+    strokeAmount,
+    blendMode,
+    mode,
+    textureOverlayAmount,
+  ]);
 
   async function refreshEssences() {
     try {
@@ -128,13 +182,22 @@ export default function MainStage() {
     playThreadAnimation(dropX, dropY, essence.color);
 
     try {
-      const { strength, controlnetScale } = intensityToParams(intensity);
+      // Until the user drags the slider themselves, each essence gets its
+      // own suggested starting intensity (see lib/styleIntensity.ts) rather
+      // than one flat default applied identically to every essence — and
+      // the slider itself moves to show what's actually being used.
+      const effectiveIntensity = intensityTouched ? intensity : suggestIntensity(essence);
+      if (!intensityTouched) setIntensity(effectiveIntensity);
+      const { strength, controlnetScale } = intensityToParams(effectiveIntensity);
       const result = await api.applyEssence(essenceId, targetPath, {
         strength,
         controlnetScale,
         steps: highDetail ? STEPS_HIGH_DETAIL : STEPS_STANDARD,
-        preserveColor,
+        colorPreservation,
+        strokeAmount,
         blendMode,
+        mode,
+        textureOverlayAmount,
       });
       await crossfadeSteps(result.steps);
       setBaseSrc(result.final);
@@ -245,58 +308,127 @@ export default function MainStage() {
                 strength + controlnet_scale together (see lib/styleIntensity.ts)
                 rather than exposing those two raw, easy-to-misuse knobs directly. */}
             <div className="absolute -bottom-14 left-1/2 -translate-x-1/2 flex items-center flex-wrap justify-center gap-4 bg-charcoal/90 text-ink-soft text-xs px-4 py-2 rounded-card border border-white/10 max-w-[90vw]">
-              <label className="flex items-center gap-2">
-                <span>Subtle</span>
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={intensity}
-                  onChange={(e) => setIntensity(parseFloat(e.target.value))}
-                  className="w-28 accent-gold"
-                  aria-label="Style intensity"
-                />
-                <span>Strong</span>
-              </label>
-              <button
-                onClick={() => setHighDetail((v) => !v)}
-                className={`px-2 py-0.5 rounded-full border transition-colors ${
-                  highDetail ? 'border-gold/60 text-gold' : 'border-white/10 text-ink-soft hover:text-ink'
-                }`}
-                title="More denoising steps: crisper detail, takes longer"
-              >
-                {highDetail ? 'High detail' : 'Standard'}
-              </button>
-              <button
-                onClick={() => setPreserveColor((v) => !v)}
-                className={`px-2 py-0.5 rounded-full border transition-colors ${
-                  preserveColor ? 'border-gold/60 text-gold' : 'border-white/10 text-ink-soft hover:text-ink'
-                }`}
-                title="Keep the photo's own colors, take only texture/brushwork from the essence"
-              >
-                {preserveColor ? 'Original color' : 'Essence color'}
-              </button>
-              <div className="flex items-center gap-1 border border-white/10 rounded-full p-0.5" role="group" aria-label="Blend mode">
+              {/* Engine switch: two entirely different apply paths, not a
+                  blend of one (see sidecar/texture_overlay.py and
+                  generation.apply_essence's own docstring for why a
+                  material-like essence needs a non-diffusion engine
+                  instead of another restyle slider). Everything below
+                  swaps based on which is selected. */}
+              <div className="flex items-center gap-1 border border-white/10 rounded-full p-0.5" role="group" aria-label="Apply engine">
                 {(
                   [
-                    { mode: 'subject' as const, label: 'Subject', title: 'Best for portraits — preserves the detected subject/face' },
-                    { mode: 'depth' as const, label: 'Depth', title: 'Best for landscapes/products — foreground stays crisp, background stylizes more with distance' },
-                    { mode: 'none' as const, label: 'Off', title: 'One flat pass over the whole photo' },
+                    { m: 'restyle' as const, label: 'Restyle', title: 'The diffusion pipeline — reinterprets the photo in the essence\'s style' },
+                    { m: 'texture_overlay' as const, label: 'Overlay', title: 'Classical bump/emboss compositing — prints the essence\'s own material (glass, canvas, paper) onto the photo unchanged, no diffusion' },
                   ]
-                ).map(({ mode, label, title }) => (
+                ).map(({ m, label, title }) => (
                   <button
-                    key={mode}
-                    onClick={() => setBlendMode(mode)}
+                    key={m}
+                    onClick={() => setMode(m)}
                     title={title}
                     className={`px-2 py-0.5 rounded-full transition-colors ${
-                      blendMode === mode ? 'bg-gold/20 text-gold' : 'text-ink-soft hover:text-ink'
+                      mode === m ? 'bg-gold/20 text-gold' : 'text-ink-soft hover:text-ink'
                     }`}
                   >
                     {label}
                   </button>
                 ))}
               </div>
+
+              {mode === 'restyle' ? (
+                <>
+                  <label className="flex items-center gap-2" title={intensityTouched ? undefined : "Starting point suggested per essence — drag to set your own for every essence"}>
+                    <span>Subtle</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={intensity}
+                      onChange={(e) => {
+                        setIntensityTouched(true);
+                        setIntensity(parseFloat(e.target.value));
+                      }}
+                      className="w-28 accent-gold"
+                      aria-label="Style intensity"
+                    />
+                    <span>Strong</span>
+                  </label>
+                  <button
+                    onClick={() => setHighDetail((v) => !v)}
+                    className={`px-2 py-0.5 rounded-full border transition-colors ${
+                      highDetail ? 'border-gold/60 text-gold' : 'border-white/10 text-ink-soft hover:text-ink'
+                    }`}
+                    title="More denoising steps: crisper detail, takes longer"
+                  >
+                    {highDetail ? 'High detail' : 'Standard'}
+                  </button>
+                  <label className="flex items-center gap-2" title="How much of the photo's own color to keep — low lets the essence's color through">
+                    <span>Essence color</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={colorPreservation}
+                      onChange={(e) => setColorPreservation(parseFloat(e.target.value))}
+                      className="w-20 accent-gold"
+                      aria-label="Color preservation"
+                    />
+                    <span>Original color</span>
+                  </label>
+                  <label
+                    className="flex items-center gap-2"
+                    title="Faint directional grain matching the dropped essence's own brush/stroke pattern — no effect for essences without a detected stroke pattern"
+                  >
+                    <span>Stroke grain</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      value={strokeAmount}
+                      onChange={(e) => setStrokeAmount(parseFloat(e.target.value))}
+                      className="w-16 accent-gold"
+                      aria-label="Stroke texture amount"
+                    />
+                  </label>
+                  <div className="flex items-center gap-1 border border-white/10 rounded-full p-0.5" role="group" aria-label="Blend mode">
+                    {(
+                      [
+                        { bm: 'subject' as const, label: 'Subject', title: 'Best for portraits — preserves the detected subject/face' },
+                        { bm: 'depth' as const, label: 'Depth', title: 'Best for landscapes/products — foreground stays crisp, background stylizes more with distance' },
+                        { bm: 'none' as const, label: 'Off', title: 'One flat pass over the whole photo' },
+                      ]
+                    ).map(({ bm, label, title }) => (
+                      <button
+                        key={bm}
+                        onClick={() => setBlendMode(bm)}
+                        title={title}
+                        className={`px-2 py-0.5 rounded-full transition-colors ${
+                          blendMode === bm ? 'bg-gold/20 text-gold' : 'text-ink-soft hover:text-ink'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <label className="flex items-center gap-2" title="How strongly the essence's material relief reads on the photo">
+                  <span>Subtle</span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={textureOverlayAmount}
+                    onChange={(e) => setTextureOverlayAmount(parseFloat(e.target.value))}
+                    className="w-28 accent-gold"
+                    aria-label="Overlay strength"
+                  />
+                  <span>Strong</span>
+                </label>
+              )}
             </div>
           </div>
         )}

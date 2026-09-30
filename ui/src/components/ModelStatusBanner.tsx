@@ -30,7 +30,7 @@ export default function ModelStatusBanner() {
     };
   }, []);
 
-  if (!status || status.state === 'ready') return null;
+  if (!status || status.state === 'ready' || status.state === 'idle') return null;
 
   const isError = status.state === 'error';
 

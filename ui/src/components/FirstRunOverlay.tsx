@@ -25,7 +25,7 @@ export default function FirstRunOverlay() {
     });
 
     const unsubscribe = window.appBridge.onBootstrapProgress((s) => {
-      if (!cancelled) setStatus(s);
+      if (!cancelled) { setStatus(s); if (s.error) setSidecarUp(false); }
     });
 
     let timer: ReturnType<typeof setTimeout>;
@@ -54,12 +54,13 @@ export default function FirstRunOverlay() {
 
   return (
     <div className="fixed inset-0 z-[100] bg-dusk flex flex-col items-center justify-center gap-4 px-8 text-center">
-      <div className="w-10 h-10 rounded-full border-2 border-gold/30 border-t-gold animate-spin" />
+      {!status.error && <div className="w-10 h-10 rounded-full border-2 border-gold/30 border-t-gold animate-spin" />}
       <p className="font-display text-ink text-lg">{status.step}</p>
-      {status.detail && <p className="text-ink-soft text-xs max-w-md truncate">{status.detail}</p>}
+      {status.detail && <p className="text-ink-soft text-xs max-w-xl break-words">{status.detail}</p>}
       <p className="text-ink-soft text-[11px] max-w-sm">
-        This only happens once — Rasa is setting up its local Python environment and GPU support.
+        First setup needs an internet connection and downloads the processing tools plus roughly 13 GB of models. Later launches reuse the downloaded files.
       </p>
+      {status.error && <button className="rounded-lg bg-gold px-5 py-2 text-dusk" onClick={async () => { await window.appBridge.retryBootstrap(); window.location.reload(); }}>Try again</button>}
     </div>
   );
 }

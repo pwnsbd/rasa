@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import FirstRunOverlay from './components/FirstRunOverlay';
+import DownloadButton from './components/DownloadButton';
 import ModelStatusBanner from './components/ModelStatusBanner';
 import NavRail, { type Zone } from './components/NavRail';
 import MainStage from './screens/MainStage';
@@ -19,6 +20,7 @@ export default function App() {
     <div className="h-screen w-screen flex bg-dusk overflow-hidden">
       <FirstRunOverlay />
       <ModelStatusBanner />
+      <DownloadButton />
       <NavRail zone={zone} onChange={setZone} />
       <main className="flex-1 min-w-0">
         {zone === 'stage' && <MainStage />}

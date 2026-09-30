@@ -1,6 +1,69 @@
 import { forwardRef } from 'react';
-import type { Essence } from '../lib/api';
+import type { Essence, EssenceAnalysis } from '../lib/api';
 import { BottleBadge, TrashIcon } from './icons';
+
+// Small, secondary "style fingerprint" from the structured analysis
+// computed at Distillation time (sidecar/style_analysis/) — palette
+// swatches (top dominant colors) + a texture-roughness bar, so a user can
+// tell at a glance why one essence applies "louder" than another before
+// they drag it, instead of finding out only after generating. Deliberately
+// minimal, same spirit as the bottle badge already being secondary to the
+// thumbnail (spec §4.2.1): a couple of dots and a thin bar, not a chart.
+// Renders nothing for a blended (Cauldron) or pre-schema essence, where
+// this analysis doesn't exist (see essence_models.py).
+// A short rotated line indicating the essence's dominant stroke axis
+// (sidecar/style_analysis/stroke.py's dominant_angle) — shown only when
+// there's both an angle confident enough to be meaningful *and* a
+// persisted raw field (field_path) for the Main Stage's "Stroke grain"
+// control (sidecar/stroke_texture.py) to actually use. Doubles as a hint:
+// an essence without this glyph won't respond to that slider at all.
+function StrokeGlyph({ stroke }: { stroke: NonNullable<EssenceAnalysis['stroke']> }) {
+  if (!stroke.field_path || stroke.dominant_angle === null) return null;
+  const deg = (stroke.dominant_angle * 180) / Math.PI;
+  return (
+    <span
+      className="shrink-0 text-gold/70"
+      title={`Stroke direction detected (${Math.round(stroke.directionality * 100)}% directional) — supports the Stroke grain control`}
+    >
+      <svg width="12" height="12" viewBox="0 0 12 12" className="block">
+        <line x1="2" y1="6" x2="10" y2="6" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" transform={`rotate(${deg} 6 6)`} />
+      </svg>
+    </span>
+  );
+}
+
+function EssenceFingerprint({ analysis }: { analysis: EssenceAnalysis }) {
+  const swatches = analysis.palette?.dominant_colors.slice(0, 4) ?? [];
+  const roughness = analysis.texture?.roughness ?? null;
+  const stroke = analysis.stroke;
+  if (swatches.length === 0 && roughness === null && !stroke) return null;
+
+  return (
+    <div className="flex items-center gap-1.5 mt-1">
+      {swatches.length > 0 && (
+        <div className="flex -space-x-1 shrink-0">
+          {swatches.map((s, i) => (
+            <span
+              key={i}
+              className="w-2.5 h-2.5 rounded-full border border-charcoal"
+              style={{ backgroundColor: s.hex }}
+              title={`${s.hex} — ${Math.round(s.weight * 100)}% of the reference`}
+            />
+          ))}
+        </div>
+      )}
+      {roughness !== null && (
+        <div
+          className="flex-1 h-1 min-w-[20px] rounded-full bg-white/10 overflow-hidden"
+          title={`Texture roughness: ${Math.round(roughness * 100)}% — how strongly this essence's own texture reads once applied`}
+        >
+          <div className="h-full bg-gold/50" style={{ width: `${Math.round(roughness * 100)}%` }} />
+        </div>
+      )}
+      {stroke && <StrokeGlyph stroke={stroke} />}
+    </div>
+  );
+}
 
 // Essence shelf (spec §4.2.1): vertical stack, thumbnail recognizability
 // first, the bottle "color" badge is a secondary indicator only.
@@ -42,6 +105,7 @@ const EssenceShelf = forwardRef<HTMLDivElement, { essences: Essence[]; onDelete:
               />
               <div className="min-w-0 flex-1">
                 <p className="text-ink text-xs truncate">{e.name}</p>
+                <EssenceFingerprint analysis={e.analysis} />
               </div>
               <BottleBadge color={e.color} />
               <button

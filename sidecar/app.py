@@ -10,28 +10,27 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
 from pydantic import BaseModel
 
 import depth
 import essence_store
 import generation
+import imaging
 import media
+import model_downloads
 import paths
 import pipeline_manager
+import relight
 from gpu import detect_gpu
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    # Kick off the (large, multi-GB on first run) SDXL + InstantStyle
-    # download/load in the background as soon as the sidecar starts, rather
-    # than waiting for the first extract/apply request — see
-    # pipeline_manager.py.
-    pipeline_manager.ensure_loading_started()
-    # Small/fast by comparison (~100MB, CPU-only — see depth.py), but same
-    # treatment: start it now so a first depth-mode /apply doesn't stall on
-    # an unexpected download.
-    depth.ensure_loading_started()
+    # Fetch all model weights in the background (progress/pause/resume via
+    # /models/downloads, shown by the UI's download button). Loading onto the
+    # GPU happens lazily on first extract/apply — see _require_model_ready.
+    model_downloads.start()
     yield
 
 
@@ -69,6 +68,23 @@ def models_status():
     return pipeline_manager.status()
 
 
+@app.get("/models/downloads")
+def models_downloads():
+    return model_downloads.status()
+
+
+@app.post("/models/downloads/pause")
+def models_downloads_pause():
+    model_downloads.pause()
+    return model_downloads.status()
+
+
+@app.post("/models/downloads/resume")
+def models_downloads_resume():
+    model_downloads.resume()
+    return model_downloads.status()
+
+
 class PreviewRequest(BaseModel):
     image_path: str
 
@@ -92,13 +108,18 @@ class ExtractRequest(BaseModel):
 
 
 def _require_model_ready():
+    dl = model_downloads.status()
+    if dl["state"] != "ready":
+        pct = int(100 * dl["downloaded_bytes"] / dl["total_bytes"]) if dl["total_bytes"] else 0
+        raise HTTPException(
+            status_code=503,
+            detail=f"Models are still downloading ({pct}%, {dl['state']}) — check the download button in the top-right corner.",
+        )
+    # Downloads done: load onto the GPU on first use (get_pipeline_blocking waits for it).
+    pipeline_manager.ensure_loading_started()
     st = pipeline_manager.status()
-    if st["state"] != "ready":
-        # Fail fast with a clear message rather than blocking the HTTP
-        # request (and the renderer's fetch/IPC chain) for however many
-        # minutes the first-run download takes — the frontend surfaces this
-        # detail directly and /models/status lets it poll for readiness.
-        raise HTTPException(status_code=503, detail=f"Style model not ready ({st['state']}): {st.get('detail') or '…'}")
+    if st["state"] == "error":
+        raise HTTPException(status_code=503, detail=f"Style model failed to load: {st.get('detail')}")
 
 
 @app.post("/essences/extract")
@@ -166,14 +187,22 @@ class ApplyRequest(BaseModel):
     depth_near_controlnet_scale: float | None = None  # override for depth mode's near-camera controlnet_scale
     depth_far_strength: float | None = None  # override for depth mode's far-camera strength (see generation.DEPTH_FAR_STRENGTH)
     depth_far_controlnet_scale: float | None = None  # override for depth mode's far-camera controlnet_scale
-    preserve_color: bool = True  # restore the target's original color post-generation (see color_transfer.py); False lets the essence's own color through
+    color_preservation: float = 1.0  # 0..1: how much of the target's original color to restore post-generation (see color_transfer.py); 0 lets the essence's own color through untouched, 1 fully restores it
+    stroke_amount: float = 0.0  # 0..1: overlays a directional grain oriented to the essence's own measured stroke pattern (see stroke_texture.py); 0 (default, unvalidated/new) is off, no-op when the essence has no persisted stroke field
     compute_depth: bool = False  # estimate + persist a depth map for the Media Page's parallax hover effect (see depth.py) — off by default: real, reported cost with no UI toggle to disable it
     content_aware_masking: bool = False  # apply-time target-aware content suppression, on top of distillation-time purification (see content_mask.py) — off by default, same reasoning
+    mode: str = "restyle"  # "restyle" (default -- the SDXL diffusion pipeline) | "texture_overlay" (classical bump/emboss compositing, no diffusion -- see generation.apply_essence's own docstring and texture_overlay.py)
+    texture_overlay_amount: float = 1.0  # 0..1, only used when mode == "texture_overlay" -- see texture_overlay.py
 
 
 @app.post("/apply")
 def apply_endpoint(req: ApplyRequest):
-    _require_model_ready()
+    # texture_overlay mode never touches the SDXL pipeline (see
+    # generation.apply_essence's own docstring) so it works even before the
+    # model has finished loading -- the readiness gate only applies to the
+    # real diffusion path.
+    if req.mode != "texture_overlay":
+        _require_model_ready()
     try:
         result = generation.apply_essence(
             req.essence_id,
@@ -188,9 +217,12 @@ def apply_endpoint(req: ApplyRequest):
             depth_near_controlnet_scale=req.depth_near_controlnet_scale,
             depth_far_strength=req.depth_far_strength,
             depth_far_controlnet_scale=req.depth_far_controlnet_scale,
-            preserve_color=req.preserve_color,
+            color_preservation=req.color_preservation,
+            stroke_amount=req.stroke_amount,
             compute_depth=req.compute_depth,
             content_aware_masking=req.content_aware_masking,
+            mode=req.mode,
+            texture_overlay_amount=req.texture_overlay_amount,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Essence or target image not found")
@@ -215,6 +247,35 @@ def delete_media_endpoint(creation_id: str):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Creation not found")
     return {"ok": True}
+
+
+@app.post("/media/{creation_id}/gif")
+def generate_gif_endpoint(creation_id: str):
+    try:
+        out_dir = media.creation_dir(creation_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Creation not found")
+
+    try:
+        image = Image.open(out_dir / "image.png")
+        depth_path = out_dir / "depth.png"
+        if depth_path.exists():
+            depth_image = Image.open(depth_path)
+        else:
+            # Most existing creations don't have one yet — compute_depth
+            # defaults to False (see generation.py) — so compute it now
+            # instead of requiring it to have been on at apply time, and
+            # save it so future calls (and the Media Page's parallax hover
+            # effect) also benefit, not just this one GIF export.
+            depth_image = depth.get_depth_map(image)
+            depth_image.save(depth_path)
+
+        gif_bytes = relight.make_relight_gif(image, depth_image)
+    except Exception as e:  # noqa: BLE001 — surface any decoding/rendering failure as a 400, not a 500 stack trace
+        raise HTTPException(status_code=400, detail=str(e))
+
+    gif_path = media.save_relight_gif(creation_id, gif_bytes)
+    return {"gif": imaging.bytes_to_data_url(gif_bytes, "gif"), "gif_path": gif_path}
 
 
 if __name__ == "__main__":

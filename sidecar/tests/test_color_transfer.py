@@ -56,3 +56,27 @@ def test_output_size_matches_input():
     b = Image.new("RGB", (64, 48), (200, 100, 50))
     result = preserve_original_color(a, b)
     assert result.size == (64, 48)
+
+
+def test_amount_zero_is_a_no_op():
+    original = _half_split_image((200, 30, 30), (30, 30, 200))
+    stylized = _half_split_image((160, 40, 160), (150, 45, 150))
+    result = preserve_original_color(stylized, original, amount=0.0)
+    assert np.array_equal(np.asarray(result), np.asarray(stylized.convert("RGB")))
+
+
+def test_amount_partial_blends_between_stylized_and_original():
+    original = _half_split_image((200, 30, 30), (30, 30, 200))
+    stylized = _half_split_image((160, 40, 160), (150, 45, 150))
+
+    full = np.asarray(preserve_original_color(stylized, original, amount=1.0), dtype=np.float64)
+    none = np.asarray(preserve_original_color(stylized, original, amount=0.0), dtype=np.float64)
+    half = np.asarray(preserve_original_color(stylized, original, amount=0.5), dtype=np.float64)
+
+    # A partial amount should land strictly between the two extremes, not
+    # equal either one -- the whole point of a slider over a toggle.
+    lo = np.minimum(full, none)
+    hi = np.maximum(full, none)
+    assert np.all(half >= lo - 1) and np.all(half <= hi + 1)  # +/-1 for rounding
+    assert not np.array_equal(half, full)
+    assert not np.array_equal(half, none)

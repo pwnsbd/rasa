@@ -35,19 +35,51 @@
       "!**/node_modules/**/{CHANGELOG.md,README.md,readme.md,.eslintrc,.travis.yml}"
     ],
     "extraResources": [
-      { "from": "sidecar", "to": "sidecar", "filter": ["**/*", "!venv", "!tests", "!__pycache__", "!**/__pycache__/**"] },
-      { "from": "LICENSE", "to": "LICENSE" },
-      { "from": "THIRD_PARTY_LICENSES.md", "to": "THIRD_PARTY_LICENSES.md" },
-      { "from": "resources/python-embed", "to": "python-embed" }
+      {
+        "from": "sidecar",
+        "to": "sidecar",
+        "filter": [
+          "**/*",
+          "!venv",
+          "!tests",
+          "!__pycache__",
+          "!**/__pycache__/**"
+        ]
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "THIRD_PARTY_LICENSES.md",
+        "to": "THIRD_PARTY_LICENSES.md"
+      },
+      {
+        "from": "resources/python-embed",
+        "to": "python-embed"
+      }
     ],
     "win": {
-      "target": "nsis",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "electron/icon.ico"
     },
     "nsis": {
       "perMachine": false,
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "deleteAppDataOnUninstall": false,
+      "include": "build/installer.nsh"
+    },
+    "artifactName": "Rasa-Setup-${version}-${arch}.${ext}"
   }
 }

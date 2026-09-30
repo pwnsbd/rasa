@@ -6,9 +6,14 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { ensureSidecarRuntime } = require('./sidecarBootstrap');
+const { ensureSidecarRuntime, cancelSetup } = require('./sidecarBootstrap');
 
 const isDev = !app.isPackaged;
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
+app.on('second-instance', () => {
+  if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
+});
 const VITE_DEV_SERVER_URL = 'http://localhost:5173';
 
 let mainWindow = null;
@@ -37,6 +42,18 @@ let sidecarPort = 8843; // fixed local-only port for the FastAPI sidecar (distin
 // who wants the model cache elsewhere.
 if (isDev) {
   app.setPath('userData', path.join(__dirname, '..', 'appdata'));
+} else {
+  // Packaged: keep ALL app data (models, runtime, essences, media) in a
+  // `data` folder inside the install directory, so removing the install
+  // folder removes everything. The installer's custom macros (build/installer.nsh)
+  // preserve it across upgrades. If the install dir isn't writable (e.g. the
+  // user picked Program Files), fall back to Electron's default userData.
+  const installData = path.join(path.dirname(process.execPath), 'data');
+  try {
+    fs.mkdirSync(installData, { recursive: true });
+    fs.accessSync(installData, fs.constants.W_OK);
+    app.setPath('userData', installData);
+  } catch (_) { /* keep default userData */ }
 }
 
 // ---- App-data layout ----
@@ -98,6 +115,27 @@ function createWindow() {
 // installer (see sidecarBootstrap.js + scripts/fetch-embed-python.js);
 // later launches skip straight through once that runtime already exists.
 let lastBootstrapStatus = null;
+let startupTask = null;
+let quitting = false;
+function reportStartup(status) {
+  lastBootstrapStatus = status;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('bootstrap:progress', status);
+}
+function launchBackend() {
+  if (startupTask || sidecarProcess) return startupTask;
+  startupTask = (async () => {
+    try {
+      reportStartup({ step: 'Preparing Rasa…' });
+      await startSidecar();
+      if (!quitting) await waitForSidecarHealth(120000);
+    } catch (err) {
+      if (sidecarProcess) { sidecarProcess.kill(); sidecarProcess = null; }
+      if (!quitting) reportStartup({ step: 'Rasa could not start', detail: String(err.message || err), error: true });
+    } finally { startupTask = null; }
+  })();
+  return startupTask;
+}
+ipcMain.handle('bootstrap:retry', () => { void launchBackend(); });
 
 async function startSidecar() {
   const dirs = appDataDirs();
@@ -114,13 +152,15 @@ async function startSidecar() {
       userDataRoot: dirs.root,
       resourcesPath: process.resourcesPath,
       onProgress: (status) => {
-        lastBootstrapStatus = status;
-        mainWindow?.webContents.send('bootstrap:progress', status);
+        reportStartup(status);
       },
     });
     args = [path.join(process.resourcesPath, 'sidecar', 'app.py')];
   }
 
+  if (quitting) return;
+  // Embeddable Python's isolated path does not include the script directory.
+  args = ['-c', "import runpy,sys; from pathlib import Path; p=sys.argv[1]; sys.path.insert(0,str(Path(p).parent)); runpy.run_path(p,run_name='__main__')", args[0]];
   sidecarProcess = spawn(cmd, args, {
     windowsHide: true,
     env: {
@@ -138,6 +178,7 @@ async function startSidecar() {
   sidecarProcess.stderr.on('data', (d) => console.error(`[sidecar:err] ${d}`));
   sidecarProcess.on('exit', (code) => {
     console.log(`[sidecar] exited with code ${code}`);
+    if (!quitting) reportStartup({ step: 'Rasa’s processing engine stopped', detail: 'Restart Rasa to reconnect. Your saved work is kept.', error: true });
     sidecarProcess = null;
   });
   sidecarProcess.on('error', (err) => {
@@ -149,7 +190,7 @@ async function waitForSidecarHealth(timeoutMs = 30000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`http://127.0.0.1:${sidecarPort}/health`);
+      const res = await fetch(`http://127.0.0.1:${sidecarPort}/health`, { signal: AbortSignal.timeout(2000) });
       if (res.ok) return await res.json();
     } catch {
       // not up yet, keep polling
@@ -284,9 +325,10 @@ ipcMain.handle('shell:showInFolder', (_event, filePath) => {
 });
 
 app.whenReady().then(async () => {
+  if (!primaryInstance) return;
   appDataDirs();
   createWindow(); // first, so a packaged install's first-run bootstrap has a window to report progress into
-  await startSidecar();
+  await launchBackend();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -298,6 +340,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  quitting = true;
+  cancelSetup();
   if (sidecarProcess) {
     sidecarProcess.kill();
     sidecarProcess = null;
