@@ -9,8 +9,8 @@
 | # | task | owner | files | done when | status |
 |---|------|-------|-------|-----------|--------|
 | 1 | ~~Depth-aware texture overlay ("Follow scene")~~ dropped — Pawan rejected the look; patch kept in session scratchpad. Kept: Media Page Save-as + restyle loading spinner | Conductor → Pawan | `MainStage.tsx`, `MediaPage.tsx`, `electron/main.js`, `preload.js` | build + tests green; Pawan sees spinner in app; committed | in review |
-| 2 | Lock Python deps + torch version | builder | `sidecar/requirements.txt`, `scripts/setup-sidecar.js`, bootstrap in `electron/main.js` ? | pinned lockfile; fresh venv install reproduces same versions | todo |
-| 3 | Disk-space preflight before model download | builder | `sidecar/model_downloads.py`, `sidecar/app.py`, UI download button | download refuses with clear error when free space < required; unit test with stubbed disk usage | todo |
+| 2 | Lock Python deps + torch version | builder | `sidecar/requirements.txt`, `scripts/setup-sidecar.js`, bootstrap in `electron/main.js` ? | pinned lockfile; fresh venv install reproduces same versions | done 2026-10-04 (constraints.txt + torch-versions.json) |
+| 3 | Disk-space preflight before model download | builder | `sidecar/model_downloads.py`, `sidecar/app.py`, UI download button | download refuses with clear error when free space < required; unit test with stubbed disk usage | done 2026-10-04 |
 | 4 | User-selectable storage directory | builder | `electron/main.js`, `sidecar/paths.py`, Settings screen | setting persists; models/essences/media land in chosen dir; restart keeps it | todo |
 | 5 | Progressive per-step previews during apply | builder | `sidecar/generation.py`, `sidecar/app.py`, `MainStage.tsx` | crossfade uses ≥3 real intermediate frames | todo |
 | 6 | Provenance metadata embed + export (spec §3) | builder | `sidecar/media.py`, Media Page | exported image carries essence id/params; test reads them back | todo |
@@ -22,6 +22,7 @@
 - Public repo + installer on GitHub Releases + showcase page (before/after gallery, short demo video). No hosted web demo.
 
 ## Decisions log
+- 2026-10-04 — v0.2.0 released (unsigned) + showcase live at pwnsbd.github.io/rasa. Clean-machine test (#7) still owed.
 - 2026-10-04 — Restyle slowness = memory pressure + heavy pipeline (measured 64s single / 125s subject; RAM to 2.6GB free). Fix generally, not per-machine; blend default → Off.
 - 2026-10-03 — Dropped "Follow scene" texture overlay: conversion quality not good enough.
 - 2026-10-03 — Share path: installer + showcase only (no hosted demo); repo pwnsbd/rasa public.

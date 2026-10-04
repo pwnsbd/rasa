@@ -1,6 +1,6 @@
 {
   "name": "rasa",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Local-first, GPU-aware desktop app for extracting the visual style of a reference image (an Essence) and reapplying it to other photos.",
   "main": "electron/main.js",
