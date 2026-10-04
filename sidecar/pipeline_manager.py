@@ -175,6 +175,31 @@ def _make_resident(pipe):
     return pipe
 
 
+def _cache_or_degrade(pipe, plan: str):
+    """Cache prompt embeds. If that fails in resident mode, the string
+    fallback in _run_generation can't work (text encoders are on CPU while
+    the execution device is pinned to cuda), so undo resident placement and
+    switch to offload. Other plans keep the string fallback. Returns (pipe, plan)."""
+    try:
+        _cache_prompt_embeds(pipe, resident=(plan == "resident"))
+        return pipe, plan
+    except Exception as e:  # noqa: BLE001 — optimisation only
+        if plan != "resident":
+            print(f"[pipeline] prompt-embed caching failed, using per-run encoding: {e}")
+            return pipe, plan
+        print(f"[pipeline] prompt-embed caching failed in resident mode, falling back to offload: {e}")
+    import torch
+
+    for m in (pipe.unet, pipe.controlnet, pipe.vae):
+        m.to("cpu")
+    if "_execution_device" in type(pipe).__dict__:
+        pipe.__class__ = type(pipe).__mro__[1]
+    torch.cuda.empty_cache()
+    pipe.enable_model_cpu_offload()
+    _status.update(memory_plan="offload")
+    return pipe, "offload"
+
+
 def _is_oom(e: Exception) -> bool:
     return "out of memory" in str(e).lower() or type(e).__name__ == "OutOfMemoryError"
 
@@ -257,10 +282,7 @@ def _load() -> None:
             pipe = pipe.to(device)
 
         _status.update(memory_plan=plan)
-        try:
-            _cache_prompt_embeds(pipe, resident=(plan == "resident"))
-        except Exception as e:  # noqa: BLE001 — optimisation only; _run_generation falls back to prompt strings
-            print(f"[pipeline] prompt-embed caching failed, using per-run encoding: {e}")
+        pipe, plan = _cache_or_degrade(pipe, plan)
 
         _pipeline = pipe
         _status.update(state="ready", detail=None)

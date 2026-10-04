@@ -140,3 +140,40 @@ def test_apply_request_blend_default_is_none():
 
 def test_health_model_status_exposes_memory_plan():
     assert "memory_plan" in pipeline_manager.status()
+
+
+def _boom(p, resident):
+    raise RuntimeError("encode failed")
+
+
+def test_resident_cache_failure_degrades_to_offload(monkeypatch):
+    import torch
+
+    calls = []
+
+    class Mod:
+        def to(self, d):
+            calls.append(("to", d))
+
+    class Base:
+        unet, controlnet, vae = Mod(), Mod(), Mod()
+
+        def enable_model_cpu_offload(self):
+            calls.append("offload")
+
+    pipe = Base()
+    pipe.__class__ = type("Base", (Base,), {"_execution_device": property(lambda self: "cuda")})
+
+    monkeypatch.setattr(pipeline_manager, "_cache_prompt_embeds", _boom)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setitem(pipeline_manager._status, "memory_plan", "resident")
+    out, plan = pipeline_manager._cache_or_degrade(pipe, "resident")
+    assert plan == "offload" and out is pipe
+    assert pipeline_manager._status["memory_plan"] == "offload"
+    assert "offload" in calls and ("to", "cpu") in calls
+    assert "_execution_device" not in type(pipe).__dict__
+
+
+def test_non_resident_cache_failure_keeps_plan(monkeypatch):
+    monkeypatch.setattr(pipeline_manager, "_cache_prompt_embeds", _boom)
+    assert pipeline_manager._cache_or_degrade(object(), "offload")[1] == "offload"
