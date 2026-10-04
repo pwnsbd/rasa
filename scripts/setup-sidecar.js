@@ -46,14 +46,17 @@ function hasNvidiaGpu() {
 // scripts/setup-sidecar.js for the same finding on a sibling project).
 function installTorch(gpu) {
   const python = venvPython();
+  // Versions come from sidecar/torch-versions.json (shared with sidecarBootstrap.js).
+  const tv = JSON.parse(fs.readFileSync(path.join(sidecarDir, 'torch-versions.json'), 'utf8'));
+  const pins = [`torch==${tv.torch}`, `torchvision==${tv.torchvision}`];
   if (gpu) {
     run(python, [
-      '-m', 'pip', 'install', 'torch', 'torchvision',
+      '-m', 'pip', 'install', ...pins,
       '--index-url', 'https://download.pytorch.org/whl/cu128',
       '--force-reinstall', '--no-deps',
     ]);
   } else {
-    run(python, ['-m', 'pip', 'install', 'torch', 'torchvision']);
+    run(python, ['-m', 'pip', 'install', ...pins, '-c', path.join(sidecarDir, 'constraints.txt')]);
   }
 }
 
@@ -73,7 +76,7 @@ function main() {
 
   const python = venvPython();
   run(python, ['-m', 'pip', 'install', '--upgrade', 'pip']);
-  run(python, ['-m', 'pip', 'install', '-r', path.join(sidecarDir, 'requirements.txt')]);
+  run(python, ['-m', 'pip', 'install', '-r', path.join(sidecarDir, 'requirements.txt'), '-c', path.join(sidecarDir, 'constraints.txt')]);
   installTorch(gpu);
 
   console.log('\nDone. Run `npm run dev` to launch the app, or `sidecar/venv/Scripts/python sidecar/app.py`');

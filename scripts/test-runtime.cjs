@@ -12,11 +12,13 @@ test('runtime readiness tracks dependencies and bootstrap changes', async () => 
     fs.mkdirSync(path.join(resourcesPath, 'sidecar'), { recursive: true });
     const requirements = path.join(resourcesPath, 'sidecar', 'requirements.txt');
     fs.writeFileSync(requirements, 'test==1');
+    fs.writeFileSync(path.join(resourcesPath, 'sidecar', 'constraints.txt'), 'c==1');
+    fs.writeFileSync(path.join(resourcesPath, 'sidecar', 'torch-versions.json'), '{}');
     const dir = bootstrap.runtimeDir(root);
     fs.mkdirSync(dir);
     const python = bootstrap.runtimePython(root);
     fs.writeFileSync(python, '');
-    const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(requirements)).update(fs.readFileSync(require.resolve('../electron/sidecarBootstrap'))).digest('hex');
+    const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(requirements)).update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'constraints.txt'))).update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'torch-versions.json'))).update(fs.readFileSync(require.resolve('../electron/sidecarBootstrap'))).digest('hex');
     fs.writeFileSync(path.join(dir, '.rasa-runtime-ready'), fingerprint);
     assert.equal(await bootstrap.ensureSidecarRuntime({ userDataRoot: root, resourcesPath }), python);
     fs.writeFileSync(requirements, 'test==2');

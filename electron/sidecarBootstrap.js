@@ -87,15 +87,18 @@ function run(cmd, args, onProgress) {
 // than shared because that script is a dev-only CLI entry point (uses
 // spawnSync + inherited stdio) and this one needs the streaming/async shape
 // above to report progress to a window instead of a terminal.
-async function installTorch(python, gpu, onProgress) {
+async function installTorch(python, gpu, resourcesPath, onProgress) {
+  const sidecarRes = path.join(resourcesPath, 'sidecar');
+  const tv = JSON.parse(fs.readFileSync(path.join(sidecarRes, 'torch-versions.json'), 'utf8'));
+  const pins = [`torch==${tv.torch}`, `torchvision==${tv.torchvision}`];
   if (gpu) {
     await run(
       python,
-      ['-m', 'pip', 'install', 'torch', 'torchvision', '--index-url', 'https://download.pytorch.org/whl/cu128', '--force-reinstall', '--no-deps'],
+      ['-m', 'pip', 'install', ...pins, '--index-url', 'https://download.pytorch.org/whl/cu128', '--force-reinstall', '--no-deps'],
       onProgress,
     );
   } else {
-    await run(python, ['-m', 'pip', 'install', 'torch', 'torchvision'], onProgress);
+    await run(python, ['-m', 'pip', 'install', ...pins, '-c', path.join(sidecarRes, 'constraints.txt')], onProgress);
   }
 }
 
@@ -112,7 +115,7 @@ async function ensureSidecarRuntime({ userDataRoot, resourcesPath, onProgress })
   const python = runtimePython(userDataRoot);
   const report = (step, detail) => onProgress?.({ step, detail });
 
-  const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'requirements.txt'))).update(fs.readFileSync(__filename)).digest('hex');
+  const fingerprint = crypto.createHash('sha256').update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'requirements.txt'))).update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'constraints.txt'))).update(fs.readFileSync(path.join(resourcesPath, 'sidecar', 'torch-versions.json'))).update(fs.readFileSync(__filename)).digest('hex');
   const marker = path.join(dir, READY_MARKER);
   if (isReady(userDataRoot) && fs.existsSync(python) && fs.readFileSync(marker, 'utf8') === fingerprint) {
     return python;
@@ -131,13 +134,13 @@ async function ensureSidecarRuntime({ userDataRoot, resourcesPath, onProgress })
   copyRecursive(bundledPython, dir);
 
   report('Setting up Rasa for the first time…', 'Installing dependencies (this can take a few minutes)');
-  await run(python, ['-m', 'pip', 'install', '-r', path.join(resourcesPath, 'sidecar', 'requirements.txt')], (line) =>
+  await run(python, ['-m', 'pip', 'install', '-r', path.join(resourcesPath, 'sidecar', 'requirements.txt'), '-c', path.join(resourcesPath, 'sidecar', 'constraints.txt')], (line) =>
     report('Setting up Rasa for the first time…', line.trim() || undefined),
   );
 
   const gpu = hasNvidiaGpu();
   report('Setting up Rasa for the first time…', gpu ? 'Installing GPU (CUDA) support' : 'Installing CPU support (no GPU detected — generation will be slow)');
-  await installTorch(python, gpu, (line) => report('Setting up Rasa for the first time…', line.trim() || undefined));
+  await installTorch(python, gpu, resourcesPath, (line) => report('Setting up Rasa for the first time…', line.trim() || undefined));
 
   fs.writeFileSync(path.join(dir, READY_MARKER), fingerprint);
   report('Setup complete');

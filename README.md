@@ -22,6 +22,8 @@ npm run sidecar:setup   # creates sidecar/venv, installs deps + the right torch 
 npm run dev              # Vite dev server + Electron, concurrently
 ```
 
+Installs are locked: `sidecar/constraints.txt` (full pip freeze of the known-good venv) and `sidecar/torch-versions.json` (torch 2.11.0 / torchvision 0.26.0) are applied by both `sidecar:setup` and the packaged first-run bootstrap.
+
 `sidecar:setup` detects an NVIDIA GPU via `nvidia-smi` and installs a CUDA (cu128) torch build if found, CPU otherwise. cu128 specifically (not an older CUDA build) is required for current-gen "Blackwell" GPUs (RTX 50-series, compute capability sm_120, including this project's RTX 5070 dev target) — see the comment in [`scripts/setup-sidecar.js`](scripts/setup-sidecar.js).
 
 All app data — models (~13GB+ once the subject-isolation dependencies' own model downloads are included), Essences, Media, cache, db, and Electron's own internal caches — lives in `<project-root>/appdata/` **in dev only**, not wherever Electron's OS-default `userData` would otherwise put it (usually the C: drive on Windows, `%APPDATA%\rasa`). This is a deliberate `app.setPath('userData', ...)` in `electron/main.js`, gated on `!app.isPackaged` — not a default worth trusting an env var to redirect every launch — that was tried first, and a forgotten env var on one real run silently re-downloaded the entire model cache back onto C:. `RASA_MODELS_DIR` still exists as a further override if you want the model cache specifically somewhere other than `appdata/models` (everything else stays under `appdata/`). A **packaged** install does not redirect `userData` at all — see Packaging/shipping below for why.

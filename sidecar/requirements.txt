@@ -1,6 +1,8 @@
 # Sidecar dependencies. torch is installed separately by scripts/setup-sidecar.js
 # (CUDA build if a GPU is detected at setup time, CPU build otherwise) since the
-# right wheel depends on the machine.
+# right wheel depends on the machine. Versions here are direct deps only; the full
+# known-good set (transitives) is locked in constraints.txt, applied via -c.
+# torch/torchvision versions live in torch-versions.json.
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 # Pinned explicitly, not just relied on as fastapi's transitive dependency —
