@@ -16,7 +16,7 @@
 | 6 | Provenance metadata embed + export (spec §3) | builder | `sidecar/media.py`, Media Page | exported image carries essence id/params; test reads them back | todo |
 | 7 | Clean-machine installer test (fresh account, interrupted setup, offline restart, uninstall/reinstall, non-ASCII path) | Pawan | — | checklist in `docs/release-readiness.md` ticked | todo |
 | 8 | Code signing with trusted certificate | Pawan | `package.json` build config | installer signed by real publisher cert | blocked (needs cert) |
-| 9 | Restyle performance: cached prompt embeds, VRAM-aware memory plan, step progress + slow warning, blend default Off | builder → Conductor bench → Pawan | see `docs/contracts/restyle-performance.md` | tests + build green; single-pass 45 steps < 50s on dev laptop; look unchanged | in progress |
+| 9 | Restyle performance: cached prompt embeds, VRAM-aware memory plan, step progress + slow warning, blend default Off | builder → Conductor bench → Pawan | see `docs/contracts/restyle-performance.md` | tests + build green; single-pass 45 steps < 50s on dev laptop; look unchanged | GPU-verified 2026-10-04: 64s→15s single, 125s→30s subject, seeded output identical; Pawan to confirm in app |
 
 ## Next: LinkedIn launch (after task 1)
 - Public repo + installer on GitHub Releases + showcase page (before/after gallery, short demo video). No hosted web demo.
