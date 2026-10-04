@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Lightbox from '../components/Lightbox';
 import ParallaxImage from '../components/ParallaxImage';
-import { SunIcon, TrashIcon } from '../components/icons';
+import { DownloadIcon, SunIcon, TrashIcon } from '../components/icons';
 import { api, type MediaItem } from '../lib/api';
 
 // Media Page (spec §4.2.3): every finished creation is saved automatically —
@@ -19,6 +19,17 @@ export default function MediaPage() {
       .then(setItems)
       .catch(() => setItems([]));
   }, []);
+
+  async function handleDownload(item: MediaItem) {
+    try {
+      const saved = await window.appBridge.saveImageDataUrl(item.image, `rasa-${item.essence_name || 'result'}`.replace(/[^\w-]+/g, '_'));
+      if (saved) {
+        setStatus({ text: 'Saved.', gifPath: saved });
+      }
+    } catch {
+      setStatus({ text: 'Could not save image.' });
+    }
+  }
 
   async function handleDelete(item: MediaItem) {
     if (!window.confirm('Delete this creation? This can\'t be undone.')) return;
@@ -73,6 +84,13 @@ export default function MediaPage() {
               className="absolute top-2 right-2 w-7 h-7 rounded-full bg-charcoal/90 border border-white/10 text-ink-soft hover:text-red-300 hover:border-red-300/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
             >
               <TrashIcon className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => handleDownload(item)}
+              title="Download image"
+              className="absolute top-2 right-11 w-7 h-7 rounded-full bg-charcoal/90 border border-white/10 text-ink-soft hover:text-gold hover:border-gold/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"
+            >
+              <DownloadIcon className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => handleAnimate(item)}

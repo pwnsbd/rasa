@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('appBridge', {
   // renderer File objects; webUtils.getPathForFile is the replacement.
   getPathForFile: (file) => webUtils.getPathForFile(file),
 
+  saveImageDataUrl: (dataUrl, suggestedName) => ipcRenderer.invoke('image:saveDataUrl', dataUrl, suggestedName),
   showInFolder: (filePath) => ipcRenderer.invoke('shell:showInFolder', filePath),
 
   // First-run sidecar setup progress (packaged installs only — see

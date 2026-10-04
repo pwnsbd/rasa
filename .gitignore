@@ -45,3 +45,6 @@ release/
 # dist:prep) — a real binary Python distribution, not source, reproducible
 # from that script, never committed.
 resources/
+
+# Conductor builder worktrees
+.claude/worktrees/

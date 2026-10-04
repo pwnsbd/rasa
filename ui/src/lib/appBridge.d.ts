@@ -42,6 +42,7 @@ export interface BootstrapStatus {
 export interface AppBridge {
   getSidecarHealth: () => Promise<SidecarHealth>;
   getAppDirs: () => Promise<Record<string, string>>;
+  saveImageDataUrl: (dataUrl: string, suggestedName?: string) => Promise<string | null>;
   sidecarCall: <T = unknown>(method: string, path: string, body?: unknown) => Promise<SidecarCallResult<T>>;
   getSidecarBaseUrl: () => Promise<string>;
   openImageDialog: () => Promise<string | null>;

@@ -13,6 +13,10 @@ export default function MainStage() {
   const [targetPath, setTargetPath] = useState<string | null>(null);
   const [baseSrc, setBaseSrc] = useState<string | null>(null);
   const [isApplying, setIsApplying] = useState(false);
+  // True only while waiting on the sidecar (not during the crossfade), so
+  // the spinner clears the moment the result starts fading in.
+  const [isWaiting, setIsWaiting] = useState(false);
+  const [waitSeconds, setWaitSeconds] = useState(0);
   const [status, setStatus] = useState<string | null>(null);
   // Style intensity + quality controls (Main Stage artistic controls,
   // previously deferred). Left at their defaults, these reproduce exactly
@@ -178,6 +182,7 @@ export default function MainStage() {
     if (!essence) return;
 
     setIsApplying(true);
+    setIsWaiting(true);
     setStatus(`Distilling "${essence.name}" into the photo…`);
     playThreadAnimation(dropX, dropY, essence.color);
 
@@ -199,15 +204,25 @@ export default function MainStage() {
         mode,
         textureOverlayAmount,
       });
+      setIsWaiting(false);
       await crossfadeSteps(result.steps);
       setBaseSrc(result.final);
     } catch (err) {
       setStatus(err instanceof Error ? err.message : 'Application failed.');
     } finally {
+      setIsWaiting(false);
       setIsApplying(false);
       setTimeout(() => setStatus(null), 1500);
     }
   }
+
+  useEffect(() => {
+    if (!isWaiting) return;
+    setWaitSeconds(0);
+    const started = Date.now();
+    const timer = setInterval(() => setWaitSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [isWaiting]);
 
   // The bottle "tips and empties" toward the drop point as a scatter of
   // glowing particles traveling from the shelf. Purely cosmetic — runs
@@ -297,6 +312,16 @@ export default function MainStage() {
           <div className="relative w-full h-full max-w-3xl max-h-[70vh]">
             <img src={baseSrc} alt="Target" className="absolute inset-0 w-full h-full object-contain rounded-card shadow-2xl" />
             <div ref={overlayRef} className="absolute inset-0 rounded-card overflow-hidden pointer-events-none" />
+            {isWaiting && (
+              <div
+                role="status"
+                aria-live="polite"
+                className="absolute inset-0 rounded-card bg-charcoal/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 pointer-events-none"
+              >
+                <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-gold animate-spin" />
+                <span className="text-ink text-sm font-body">Restyling… {waitSeconds}s</span>
+              </div>
+            )}
             <button
               onClick={() => chooseTarget()}
               className="absolute -top-3 -right-3 bg-surface text-ink-soft hover:text-ink text-xs px-3 py-1 rounded-full border border-white/10"

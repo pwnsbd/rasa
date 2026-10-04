@@ -320,6 +320,22 @@ ipcMain.handle('dialog:openImages', async () => {
   return result.filePaths;
 });
 
+// Save-as for a converted result (a data: URL from /apply). Returns the saved
+// path, or null if the user cancelled.
+ipcMain.handle('image:saveDataUrl', async (_event, dataUrl, suggestedName) => {
+  const m = /^data:image\/(\w+);base64,(.+)$/.exec(dataUrl || '');
+  if (!m) throw new Error('Not an image data URL');
+  const ext = m[1] === 'jpeg' ? 'jpg' : m[1];
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save converted image',
+    defaultPath: `${suggestedName || 'rasa-result'}.${ext}`,
+    filters: [{ name: 'Image', extensions: [ext] }],
+  });
+  if (result.canceled || !result.filePath) return null;
+  await fs.promises.writeFile(result.filePath, Buffer.from(m[2], 'base64'));
+  return result.filePath;
+});
+
 ipcMain.handle('shell:showInFolder', (_event, filePath) => {
   shell.showItemInFolder(filePath);
 });
