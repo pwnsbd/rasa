@@ -110,6 +110,18 @@
     color: var(--gold); border: 1px solid rgba(201, 163, 92, .4); border-radius: 999px; padding: 4px 10px; margin: 0 0 14px;
   }
 
+  /* Up-close brushwork strip under each example */
+  .detail-wrap figure .frame { border-radius: 8px; }
+  .detail-wrap { margin: -22px 0 44px; }
+  .detail-wrap .label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); margin: 0 0 8px; }
+  .detail-wrap .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 760px; margin-left: auto; }
+
+  /* Why */
+  .why { max-width: 720px; }
+  .why p { font-size: 17.5px; color: var(--ink); margin: 0 0 16px; }
+  .why p.soft { color: var(--ink-soft); }
+  .why .sig { font: italic 400 20px/1.4 Fraunces, Georgia, serif; color: var(--gold); margin-top: 22px; }
+
   /* Specs */
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   .card { background: var(--dusk); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
@@ -129,6 +141,7 @@
     .example { grid-template-columns: 1fr 1fr; }
     .example .result { grid-column: 1 / -1; }
     .arrow { display: none; }
+    .detail-wrap .pair { max-width: none; }
   }
   @media (max-width: 420px) {
     header.hero { padding-top: 48px; }
@@ -179,12 +192,26 @@
       <div class="arrow" aria-hidden="true">→</div>
       <figure class="result"><div class="frame"><img src="assets/result-pagoda-vangogh.jpg" alt="The pagoda photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result</figcaption></figure>
     </div>
+    <div class="detail-wrap">
+      <p class="label">Up close · 3× zoom</p>
+      <div class="pair">
+        <figure><div class="frame"><img src="assets/detail-pagoda-orig.jpg" alt="Original, zoomed in: walls and rooftops" loading="lazy"></div><figcaption><b>Original</b></figcaption></figure>
+        <figure><div class="frame"><img src="assets/detail-pagoda-rasa.jpg" alt="Rasa result, zoomed in: walls and rooftops" loading="lazy"></div><figcaption><b>Rasa</b> · brushstrokes</figcaption></figure>
+      </div>
+    </div>
 
     <div class="example">
       <figure class="ref"><div class="frame"><img src="assets/ref-vangogh.jpg" alt="Van Gogh, Wheat Field with Cypresses" loading="lazy"></div><figcaption><b>Essence</b> · Van Gogh</figcaption></figure>
       <figure><div class="frame"><img src="assets/photo-temple.jpg" alt="Original night photo of a stone temple" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
       <div class="arrow" aria-hidden="true">→</div>
       <figure class="result"><div class="frame"><img src="assets/result-temple-vangogh.jpg" alt="The temple photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result</figcaption></figure>
+    </div>
+    <div class="detail-wrap">
+      <p class="label">Up close · 3× zoom</p>
+      <div class="pair">
+        <figure><div class="frame"><img src="assets/detail-temple-orig.jpg" alt="Original, zoomed in: carved wooden facade" loading="lazy"></div><figcaption><b>Original</b></figcaption></figure>
+        <figure><div class="frame"><img src="assets/detail-temple-rasa.jpg" alt="Rasa result, zoomed in: carved wooden facade" loading="lazy"></div><figcaption><b>Rasa</b> · brushstrokes</figcaption></figure>
+      </div>
     </div>
 
     <p class="callout">One photo, two Essences</p>
@@ -194,13 +221,37 @@
       <div class="arrow" aria-hidden="true">→</div>
       <figure class="result"><div class="frame"><img src="assets/result-street-vangogh.jpg" alt="The street photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result · painterly</figcaption></figure>
     </div>
+    <div class="detail-wrap">
+      <p class="label">Up close · 3× zoom</p>
+      <div class="pair">
+        <figure><div class="frame"><img src="assets/detail-street-vangogh-orig.jpg" alt="Original, zoomed in: brick wall and window" loading="lazy"></div><figcaption><b>Original</b></figcaption></figure>
+        <figure><div class="frame"><img src="assets/detail-street-vangogh-rasa.jpg" alt="Rasa result, zoomed in: brick wall and window" loading="lazy"></div><figcaption><b>Rasa</b> · brushstrokes</figcaption></figure>
+      </div>
+    </div>
     <div class="example">
       <figure class="ref"><div class="frame"><img src="assets/ref-leonardo.jpg" alt="Renaissance engraving of Leonardo da Vinci" loading="lazy"></div><figcaption><b>Essence</b> · Renaissance engraving</figcaption></figure>
       <figure><div class="frame"><img src="assets/photo-street.jpg" alt="Original night photo of a person on a lit street" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
       <div class="arrow" aria-hidden="true">→</div>
       <figure class="result"><div class="frame"><img src="assets/result-street-leonardo.jpg" alt="The street photo restyled as a hatched engraving" loading="lazy"></div><figcaption><b>Rasa</b> result · engraved</figcaption></figure>
     </div>
+    <div class="detail-wrap">
+      <p class="label">Up close · 3× zoom</p>
+      <div class="pair">
+        <figure><div class="frame"><img src="assets/detail-street-leonardo-orig.jpg" alt="Original, zoomed in: brick wall and window" loading="lazy"></div><figcaption><b>Original</b></figcaption></figure>
+        <figure><div class="frame"><img src="assets/detail-street-leonardo-rasa.jpg" alt="Rasa result, zoomed in: brick wall and window" loading="lazy"></div><figcaption><b>Rasa</b> · hatched lines</figcaption></figure>
+      </div>
+    </div>
   </div>
+</section>
+
+<section>
+  <div class="wrap"><div class="why">
+    <h2>Why I built Rasa</h2>
+    <p>The computers on our desks are quietly getting powerful. Every new laptop ships with a better GPU, and models that once needed a data center now fit on one card. Most of the time, that GPU just sits idle.</p>
+    <p>I think the next wave of everyday apps will use it: small, local models doing simple, delightful jobs on your own machine. No cloud, no account, no queue, no prompt to engineer.</p>
+    <p class="soft">Rasa is my take on that future. Wanting your photo to feel like a Van Gogh is a simple, human wish. It shouldn't need a server farm. So I built the thing I wished existed: pick a painting you love, and pour its feeling onto your own photos, right on your own computer.</p>
+    <p class="sig">— Pawan</p>
+  </div></div>
 </section>
 
 <section>
