@@ -16,11 +16,13 @@
 | 6 | Provenance metadata embed + export (spec §3) | builder | `sidecar/media.py`, Media Page | exported image carries essence id/params; test reads them back | todo |
 | 7 | Clean-machine installer test (fresh account, interrupted setup, offline restart, uninstall/reinstall, non-ASCII path) | Pawan | — | checklist in `docs/release-readiness.md` ticked | todo |
 | 8 | Code signing with trusted certificate | Pawan | `package.json` build config | installer signed by real publisher cert | blocked (needs cert) |
+| 9 | Restyle performance: cached prompt embeds, VRAM-aware memory plan, step progress + slow warning, blend default Off | builder → Conductor bench → Pawan | see `docs/contracts/restyle-performance.md` | tests + build green; single-pass 45 steps < 50s on dev laptop; look unchanged | in progress |
 
 ## Next: LinkedIn launch (after task 1)
 - Public repo + installer on GitHub Releases + showcase page (before/after gallery, short demo video). No hosted web demo.
 
 ## Decisions log
+- 2026-10-04 — Restyle slowness = memory pressure + heavy pipeline (measured 64s single / 125s subject; RAM to 2.6GB free). Fix generally, not per-machine; blend default → Off.
 - 2026-10-03 — Dropped "Follow scene" texture overlay: conversion quality not good enough.
 - 2026-10-03 — Share path: installer + showcase only (no hosted demo); repo pwnsbd/rasa public.
 - 2026-10-02 — Onboarded to Conductor workflow. Contracts in `docs/contracts/` are first drafts; Pawan to review before dispatch.
