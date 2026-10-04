@@ -30,6 +30,7 @@ request just hanging with no feedback.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import threading
 import time
@@ -45,7 +46,10 @@ os.environ.setdefault("HF_HOME", str(paths.models_dir() / "hf-cache"))
 
 _lock = threading.Lock()
 _pipeline = None
-_status: dict = {"state": "idle", "detail": None}  # idle | loading | ready | error
+_status: dict = {"state": "idle", "detail": None, "memory_plan": None}  # state: idle | loading | ready | error
+_prompt_embeds: dict | None = None
+
+NEGATIVE_PROMPT = "lowres, blurry, bad anatomy, worst quality, low quality, watermark, text"
 
 BASE_MODEL_ID = "stabilityai/stable-diffusion-xl-base-1.0"
 IP_ADAPTER_REPO = "h94/IP-Adapter"
@@ -65,8 +69,114 @@ CONTROLNET_CONDITIONING_SCALE = 0.85
 INSTANT_STYLE_SCALE = {"down": {"block_2": [0.0, 1.0]}, "up": {"block_0": [0.0, 1.0, 0.0]}}
 
 
+# Memory plan (see docs/contracts/restyle-performance.md). "resident" keeps
+# UNet + ControlNet + VAE on the GPU for the whole session (no per-run
+# RAM<->VRAM shuffling); text encoders and CLIP image encoder stay on CPU.
+# ~9.0GB = UNet 5.1 + ControlNet 2.5 + VAE/IP-adapter ~0.4 + activation headroom.
+RESIDENT_MIN_FREE_BYTES = int(9.0 * 1024**3)
+
+
+def choose_memory_plan(free_vram_bytes: int, total_vram_bytes: int, device: str) -> str:
+    """Pure placement decision: "resident" | "offload" | "cpu"."""
+    if str(device) != "cuda":
+        return "cpu"
+    if free_vram_bytes >= RESIDENT_MIN_FREE_BYTES and total_vram_bytes >= RESIDENT_MIN_FREE_BYTES:
+        return "resident"
+    return "offload"
+
+
 def status() -> dict:
     return dict(_status)
+
+
+def compute_device():
+    """Device the denoising runs on. Use this instead of
+    `pipe._execution_device`, which can report CPU in resident mode where
+    components are deliberately split across devices."""
+    import torch
+
+    if _status.get("memory_plan") == "cpu":
+        return torch.device("cpu")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def cached_prompt_embeds() -> dict | None:
+    """Pre-computed embeds for prompt="" + the constant negative prompt
+    (kwargs for the pipeline call), or None if not cached."""
+    return _prompt_embeds
+
+
+@contextlib.contextmanager
+def image_encoder_on_compute(pipe):
+    """In resident mode the CLIP image encoder lives on CPU; move it to the
+    compute device only while embedding, then back. No-op otherwise."""
+    enc = getattr(pipe, "image_encoder", None)
+    if _status.get("memory_plan") != "resident" or enc is None:
+        yield
+        return
+    import torch
+
+    enc.to(compute_device())
+    try:
+        yield
+    finally:
+        enc.to("cpu")
+        torch.cuda.empty_cache()
+
+
+def _cache_prompt_embeds(pipe, resident: bool) -> None:
+    """Encode the fixed empty prompt once so the text encoders never run
+    per-apply. In resident mode they are briefly moved to the GPU for it."""
+    global _prompt_embeds
+    import torch
+
+    dev = compute_device()
+    encoders = [getattr(pipe, n, None) for n in ("text_encoder", "text_encoder_2")]
+    if resident:
+        for e in encoders:
+            if e is not None:
+                e.to(dev)
+    try:
+        with torch.no_grad():
+            pe, npe, ppe, nppe = pipe.encode_prompt(
+                prompt="",
+                prompt_2=None,
+                device=dev,
+                num_images_per_prompt=1,
+                do_classifier_free_guidance=True,
+                negative_prompt=NEGATIVE_PROMPT,
+            )
+    finally:
+        if resident:
+            for e in encoders:
+                if e is not None:
+                    e.to("cpu")
+            torch.cuda.empty_cache()
+    edtype = torch.float16 if dev.type == "cuda" else torch.float32
+    _prompt_embeds = {
+        "prompt_embeds": pe.to(dev, edtype),
+        "negative_prompt_embeds": npe.to(dev, edtype),
+        "pooled_prompt_embeds": ppe.to(dev, edtype),
+        "negative_pooled_prompt_embeds": nppe.to(dev, edtype),
+    }
+
+
+def _make_resident(pipe):
+    """Put UNet/ControlNet/VAE on cuda; text/image encoders stay on CPU.
+    Components are then split across devices, so pin _execution_device to
+    cuda (the stock property can report the CPU-resident encoder's device)."""
+    import torch
+
+    pipe.unet.to("cuda")
+    pipe.controlnet.to("cuda")
+    pipe.vae.to("cuda")
+    cls = type(pipe)
+    pipe.__class__ = type(cls.__name__, (cls,), {"_execution_device": property(lambda self: torch.device("cuda"))})
+    return pipe
+
+
+def _is_oom(e: Exception) -> bool:
+    return "out of memory" in str(e).lower() or type(e).__name__ == "OutOfMemoryError"
 
 
 def _load() -> None:
@@ -109,7 +219,26 @@ def _load() -> None:
 
         pipe.enable_vae_slicing()  # keeps VAE decode memory bounded, cheap to always have on
 
+        plan = "cpu"
         if device == "cuda":
+            free, total = torch.cuda.mem_get_info()
+            plan = choose_memory_plan(free, total, device)
+            print(f"[pipeline] memory plan: {plan} (free VRAM {free / 1024**3:.1f}GB of {total / 1024**3:.1f}GB)")
+
+        if plan == "resident":
+            _status.update(detail="Moving models onto the GPU…")
+            try:
+                pipe = _make_resident(pipe)
+            except Exception as e:  # noqa: BLE001
+                if not _is_oom(e):
+                    raise
+                print(f"[pipeline] resident placement hit OOM, falling back to offload: {e}")
+                for m in (pipe.unet, pipe.controlnet, pipe.vae):
+                    m.to("cpu")
+                torch.cuda.empty_cache()
+                plan = "offload"
+
+        if plan == "offload":
             # SDXL + IP-Adapter + its CLIP-H image encoder + dual text
             # encoders + Tile ControlNet resident all at once leaves almost
             # no headroom on a ~12GB card (measured ~11.3GB baseline on an
@@ -120,13 +249,18 @@ def _load() -> None:
             # keeps only the actively-computing submodule on GPU, swapping
             # others to CPU RAM between stages — use this INSTEAD of
             # `pipe.to(device)` (offload manages device placement itself).
-            # See essence_store.py/generation.py's use of `_execution_device` rather than
-            # `.device` for why direct pipeline calls need to account for
-            # this too.
+            # Callers use compute_device() rather than `.device` since
+            # components idle on CPU under offload.
             _status.update(detail="Configuring GPU memory offload…")
             pipe.enable_model_cpu_offload()
-        else:
+        elif plan == "cpu":
             pipe = pipe.to(device)
+
+        _status.update(memory_plan=plan)
+        try:
+            _cache_prompt_embeds(pipe, resident=(plan == "resident"))
+        except Exception as e:  # noqa: BLE001 — optimisation only; _run_generation falls back to prompt strings
+            print(f"[pipeline] prompt-embed caching failed, using per-run encoding: {e}")
 
         _pipeline = pipe
         _status.update(state="ready", detail=None)

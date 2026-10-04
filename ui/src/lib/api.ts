@@ -147,6 +147,19 @@ export interface DownloadStatus {
   items: DownloadItem[];
 }
 
+// Live /apply progress, polled while the (blocking) apply call is in flight.
+export type ApplyProgress =
+  | { active: false }
+  | {
+      active: true;
+      pass_index: number;
+      pass_count: number;
+      step: number;
+      total_steps: number;
+      sec_per_step: number | null;
+      slow: boolean;
+    };
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await window.appBridge.sidecarCall(method, path, body);
   if (!res.ok) throw new Error(res.error ?? `Sidecar call failed: ${method} ${path}`);
@@ -157,6 +170,8 @@ export const api = {
   health: () => window.appBridge.getSidecarHealth(),
 
   modelStatus: () => call<{ state: 'idle' | 'loading' | 'ready' | 'error'; detail: string | null }>('GET', '/models/status'),
+
+  applyProgress: () => call<ApplyProgress>('GET', '/apply/progress'),
 
   downloadStatus: () => call<DownloadStatus>('GET', '/models/downloads'),
   pauseDownloads: () => call<DownloadStatus>('POST', '/models/downloads/pause'),

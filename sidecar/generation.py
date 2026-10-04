@@ -29,6 +29,8 @@ content drift a classical bump/emboss overlay doesn't have.
 from __future__ import annotations
 
 import os
+import statistics
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -58,7 +60,7 @@ WORKING_MAX_DIM = 1024  # SDXL's native resolution; img2img input is resized to 
 DEFAULT_STRENGTH = 0.85
 DEFAULT_GUIDANCE = 5.0
 DEFAULT_STEPS = 30
-NEGATIVE_PROMPT = "lowres, blurry, bad anatomy, worst quality, low quality, watermark, text"
+NEGATIVE_PROMPT = pipeline_manager.NEGATIVE_PROMPT
 
 # DepthGradientStrategy defaults — an initial, reasoned starting point (near
 # sits close to the non-face subject suggestion in segmentation.py, far sits
@@ -80,10 +82,94 @@ def _resize_working(img: Image.Image) -> Image.Image:
     return img.resize((max(w, 8), max(h, 8)))
 
 
+SLOW_STEP_S = 6.0  # sec/step above which the UI warns that GPU memory is likely full/spilling
+
+
+class ProgressTracker:
+    """Thread-safe live progress of the current /apply, polled via
+    GET /apply/progress while POST /apply blocks (they run in separate
+    threadpool threads). sec_per_step is the rolling median of the last 3
+    step durations, so one slow outlier doesn't flip the slow flag."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._reset_locked()
+
+    def _reset_locked(self):
+        self._active = False
+        self._pass_index = 0
+        self._pass_count = 1
+        self._step = 0
+        self._total_steps = 0
+        self._durations: list[float] = []
+        self._last_t: float | None = None
+
+    def begin(self, pass_count: int = 1):
+        with self._lock:
+            self._reset_locked()
+            self._active = True
+            self._pass_count = pass_count
+
+    def set_pass_count(self, pass_count: int):
+        with self._lock:
+            self._pass_count = pass_count
+
+    def start_pass(self, now: float | None = None):
+        with self._lock:
+            self._active = True
+            self._pass_index += 1
+            self._step = 0
+            self._total_steps = 0
+            self._durations = []
+            self._last_t = time.monotonic() if now is None else now
+
+    def on_step(self, step: int, total_steps: int, now: float | None = None):
+        """`step` is the 1-based number of steps completed."""
+        t = time.monotonic() if now is None else now
+        with self._lock:
+            if self._last_t is not None:
+                self._durations = (self._durations + [t - self._last_t])[-3:]
+            self._last_t = t
+            self._step = step
+            self._total_steps = total_steps
+
+    def finish(self):
+        with self._lock:
+            self._active = False
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            if not self._active:
+                return {"active": False}
+            sps = statistics.median(self._durations) if self._durations else None
+            return {
+                "active": True,
+                "pass_index": self._pass_index,
+                "pass_count": self._pass_count,
+                "step": self._step,
+                "total_steps": self._total_steps,
+                "sec_per_step": sps,
+                "slow": sps is not None and sps > SLOW_STEP_S,
+            }
+
+
+progress = ProgressTracker()
+
+
 def _run_generation(pipe, embeds, working, strength, controlnet_scale, steps, generator=None):
+    cached = pipeline_manager.cached_prompt_embeds()
+    # Cached embeds (computed once at load for prompt="" + NEGATIVE_PROMPT)
+    # skip both text encoders on every apply; fall back to strings if absent.
+    prompt_kwargs = dict(cached) if cached else {"prompt": "", "negative_prompt": NEGATIVE_PROMPT}
+
+    def _on_step_end(_pipe, i, _t, callback_kwargs):
+        progress.on_step(i + 1, getattr(_pipe, "num_timesteps", steps))
+        return callback_kwargs
+
+    progress.start_pass()
     result = pipe(
-        prompt="",
-        negative_prompt=NEGATIVE_PROMPT,
+        **prompt_kwargs,
+        callback_on_step_end=_on_step_end,
         image=working,
         control_image=working,
         controlnet_conditioning_scale=controlnet_scale,
@@ -115,8 +201,8 @@ def _two_pass_blend(pipe, embeds, working, steps, params_a, params_b, mask, labe
     strength_b, controlnet_scale_b = params_b
 
     seed = int.from_bytes(os.urandom(4), "big")
-    gen_a = torch.Generator(device=pipe._execution_device).manual_seed(seed)
-    gen_b = torch.Generator(device=pipe._execution_device).manual_seed(seed)
+    gen_a = torch.Generator(device=pipeline_manager.compute_device()).manual_seed(seed)
+    gen_b = torch.Generator(device=pipeline_manager.compute_device()).manual_seed(seed)
 
     t_a = time.perf_counter()
     pass_a = _run_generation(pipe, embeds, working, strength_a, controlnet_scale_a, steps, gen_a)
@@ -197,6 +283,7 @@ class SubjectIsolatedStrategy(GenerationStrategy):
         print(f"[apply] segmentation: {(time.perf_counter() - t_seg) * 1000:.0f}ms (subject_detected={mask is not None})")
 
         if mask is None:
+            progress.set_pass_count(1)
             return SinglePassStrategy(self.bg_strength, self.bg_controlnet_scale).run(pipe, embeds, working, steps)
 
         t_face = time.perf_counter()
@@ -299,7 +386,7 @@ def apply_essence(
     steps: int = DEFAULT_STEPS,
     strength: float | None = None,
     controlnet_scale: float | None = None,
-    blend_mode: str = "subject",
+    blend_mode: str = "none",
     subject_strength: float | None = None,
     subject_controlnet_scale: float | None = None,
     depth_near_strength: float | None = None,
@@ -421,7 +508,7 @@ def apply_essence(
 
     t_load = time.perf_counter()
     pipe = pipeline_manager.get_pipeline_blocking()
-    embeds = essence_store.load_embedding(essence_id, pipe._execution_device)
+    embeds = essence_store.load_embedding(essence_id, pipeline_manager.compute_device())
 
     target = Image.open(target_image_path)
     working = _resize_working(target)
@@ -444,6 +531,8 @@ def apply_essence(
         controlnet_scale if controlnet_scale is not None else pipeline_manager.CONTROLNET_CONDITIONING_SCALE
     )
 
+    progress.begin(pass_count=1 if blend_mode == "none" else 2)
+
     strategy: GenerationStrategy
     if blend_mode == "depth":
         strategy = DepthGradientStrategy(
@@ -458,7 +547,10 @@ def apply_essence(
     else:  # "subject" — the default, and the fallback for any unrecognized value
         strategy = SubjectIsolatedStrategy(bg_strength, bg_controlnet_scale, subject_strength, subject_controlnet_scale)
 
-    result = strategy.run(pipe, embeds, working, steps)
+    try:
+        result = strategy.run(pipe, embeds, working, steps)
+    finally:
+        progress.finish()
 
     final = result.final
     if color_preservation > 0.0:

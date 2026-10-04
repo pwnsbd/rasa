@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import EssenceShelf from '../components/EssenceShelf';
-import { api, type ApplyMode, type BlendMode, type Essence } from '../lib/api';
+import { api, type ApplyMode, type ApplyProgress, type BlendMode, type Essence } from '../lib/api';
 import { rgbCss } from '../lib/color';
 import { DEFAULT_INTENSITY, STEPS_HIGH_DETAIL, STEPS_STANDARD, intensityToParams, suggestIntensity } from '../lib/styleIntensity';
 
@@ -17,6 +17,7 @@ export default function MainStage() {
   // the spinner clears the moment the result starts fading in.
   const [isWaiting, setIsWaiting] = useState(false);
   const [waitSeconds, setWaitSeconds] = useState(0);
+  const [progress, setProgress] = useState<ApplyProgress>({ active: false });
   const [status, setStatus] = useState<string | null>(null);
   // Style intensity + quality controls (Main Stage artistic controls,
   // previously deferred). Left at their defaults, these reproduce exactly
@@ -54,7 +55,7 @@ export default function MainStage() {
   // sidecar/depth.py) is the new option for photos without one clear
   // subject: landscapes, group shots, product shots — the kind of thing a
   // flat filter has no way to react to at all.
-  const [blendMode, setBlendMode] = useState<BlendMode>('subject');
+  const [blendMode, setBlendMode] = useState<BlendMode>('none');
   // "restyle" (default): the SDXL diffusion pipeline above -- everything
   // this screen did before. "texture_overlay": a second, non-diffusion
   // engine (see sidecar/texture_overlay.py) that composites the essence's
@@ -221,7 +222,22 @@ export default function MainStage() {
     setWaitSeconds(0);
     const started = Date.now();
     const timer = setInterval(() => setWaitSeconds(Math.floor((Date.now() - started) / 1000)), 1000);
-    return () => clearInterval(timer);
+    // Poll live step progress through the sidecar proxy (never a direct fetch).
+    setProgress({ active: false });
+    let cancelled = false;
+    const poll = setInterval(() => {
+      api
+        .applyProgress()
+        .then((p) => {
+          if (!cancelled) setProgress(p);
+        })
+        .catch(() => {});
+    }, 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      clearInterval(poll);
+    };
   }, [isWaiting]);
 
   // The bottle "tips and empties" toward the drop point as a scatter of
@@ -319,7 +335,18 @@ export default function MainStage() {
                 className="absolute inset-0 rounded-card bg-charcoal/55 backdrop-blur-[2px] flex flex-col items-center justify-center gap-3 pointer-events-none"
               >
                 <div className="w-10 h-10 rounded-full border-2 border-white/15 border-t-gold animate-spin" />
-                <span className="text-ink text-sm font-body">Restyling… {waitSeconds}s</span>
+                <span className="text-ink text-sm font-body">
+                  {progress.active && progress.step > 0
+                    ? `Restyling… ${progress.pass_count > 1 ? `pass ${progress.pass_index}/${progress.pass_count} · ` : ''}step ${progress.step}/${progress.total_steps}${
+                        progress.sec_per_step !== null ? ` · ${progress.sec_per_step.toFixed(1)}s/step` : ''
+                      }`
+                    : `Restyling… ${waitSeconds}s`}
+                </span>
+                {progress.active && progress.slow && (
+                  <span className="text-ink-soft text-xs font-body text-center max-w-xs">
+                    Your GPU memory is full — close other GPU-heavy apps (browsers, games, wallpaper engines) for a much faster restyle.
+                  </span>
+                )}
               </div>
             )}
             <button

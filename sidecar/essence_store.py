@@ -201,19 +201,18 @@ def extract_ip_adapter_embedding(pipe, image: Image.Image):
     blend_essences), and by generation.py's apply-time content-aware
     masking to embed the *target* photo the same way (see content_mask.py).
 
-    `_execution_device`, not `.device` — under enable_model_cpu_offload
-    (see pipeline_manager.py) components idle on CPU until their hook moves
-    them to GPU for their turn, so `.device` doesn't reliably name the GPU.
-    `_execution_device` is what the pipeline's own __call__ uses internally
-    for this exact reason.
+    `pipeline_manager.compute_device()`, not `.device` — under
+    enable_model_cpu_offload or the resident plan (see pipeline_manager.py)
+    components idle on CPU, so `.device` doesn't reliably name the GPU.
     """
-    embeds = pipe.prepare_ip_adapter_image_embeds(
-        ip_adapter_image=[image.convert("RGB")],
-        ip_adapter_image_embeds=None,
-        device=pipe._execution_device,
-        num_images_per_prompt=1,
-        do_classifier_free_guidance=True,
-    )
+    with pipeline_manager.image_encoder_on_compute(pipe):  # resident mode keeps it on CPU otherwise
+        embeds = pipe.prepare_ip_adapter_image_embeds(
+            ip_adapter_image=[image.convert("RGB")],
+            ip_adapter_image_embeds=None,
+            device=pipeline_manager.compute_device(),
+            num_images_per_prompt=1,
+            do_classifier_free_guidance=True,
+        )
     return embeds[0]
 
 
@@ -533,7 +532,7 @@ def blend_essences(ingredients: list[dict], name: str | None = None) -> dict:
         raise ValueError("blend_essences needs at least one ingredient")
 
     pipe = pipeline_manager.get_pipeline_blocking()
-    device = pipe._execution_device
+    device = pipeline_manager.compute_device()
 
     embed_tensors = []
     thumb_sources: list[Image.Image] = []

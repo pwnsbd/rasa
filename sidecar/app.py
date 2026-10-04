@@ -180,7 +180,7 @@ class ApplyRequest(BaseModel):
     steps: int = generation.DEFAULT_STEPS
     strength: float | None = None  # background-region override; None -> generation.DEFAULT_STRENGTH
     controlnet_scale: float | None = None  # background-region override; None -> pipeline_manager.CONTROLNET_CONDITIONING_SCALE
-    blend_mode: str = "subject"  # "subject" (rembg+face two-pass, default) | "depth" (continuous depth two-pass) | "none" (flat single pass)
+    blend_mode: str = "none"  # "none" (flat single pass, default) | "subject" (rembg+face two-pass) | "depth" (continuous depth two-pass)
     subject_strength: float | None = None  # override for the suggested subject-region strength (see segmentation.py)
     subject_controlnet_scale: float | None = None  # override for the suggested subject-region controlnet_scale
     depth_near_strength: float | None = None  # override for depth mode's near-camera strength (see generation.DEPTH_NEAR_STRENGTH)
@@ -193,6 +193,11 @@ class ApplyRequest(BaseModel):
     content_aware_masking: bool = False  # apply-time target-aware content suppression, on top of distillation-time purification (see content_mask.py) — off by default, same reasoning
     mode: str = "restyle"  # "restyle" (default -- the SDXL diffusion pipeline) | "texture_overlay" (classical bump/emboss compositing, no diffusion -- see generation.apply_essence's own docstring and texture_overlay.py)
     texture_overlay_amount: float = 1.0  # 0..1, only used when mode == "texture_overlay" -- see texture_overlay.py
+
+
+@app.get("/apply/progress")
+def apply_progress_endpoint():
+    return generation.progress.snapshot()
 
 
 @app.post("/apply")
