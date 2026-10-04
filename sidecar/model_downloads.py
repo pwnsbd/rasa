@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+import shutil
 import threading
 import time
 from collections import deque
@@ -32,6 +33,14 @@ os.environ.setdefault("HF_HOME", str(paths.models_dir() / "hf-cache"))
 # hf-xet downloads bypass the tqdm progress bar (no byte progress, no pause);
 # the plain HTTP path reports both.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
+
+
+# Free space to keep on top of what the download itself needs (temp files,
+# unpacking, the user's own Essences/Media living on the same drive).
+DISK_SAFETY_MARGIN = 2 * 1024**3
+# Conservative total used only when the Hub can't be asked for file sizes
+# (offline): the real total is ~11.5-13GB.
+ESTIMATED_TOTAL_BYTES = 14 * 1024**3
 
 
 @dataclass
@@ -74,8 +83,9 @@ class _Paused(Exception):
 
 _lock = threading.RLock()
 _items: list[Item] = []
-_state = "idle"  # idle | downloading | paused | ready | error
+_state = "idle"  # idle | downloading | paused | ready | error | insufficient_disk
 _error: str | None = None
+_disk: dict | None = None  # {required_bytes, free_bytes, path} while insufficient_disk
 _pause_requested = False
 _thread: threading.Thread | None = None
 _samples: deque = deque()  # (timestamp, total downloaded bytes) for speed
@@ -109,6 +119,9 @@ def status() -> dict:
         return {
             "state": _state,
             "error": _error,
+            "required_bytes": _disk["required_bytes"] if _disk else None,
+            "free_bytes": _disk["free_bytes"] if _disk else None,
+            "path": _disk["path"] if _disk else None,
             "total_bytes": total,
             "downloaded_bytes": done,
             "speed_bps": speed,
@@ -228,6 +241,44 @@ def _measure(item: Item) -> None:
     item.total = sum(s.size or 0 for s in matched)
 
 
+def _present_bytes(item: Item) -> int:
+    """Bytes already on disk for this item's repo (complete blobs + `.incomplete`)."""
+    blobs = paths.models_dir() / "hf-cache" / "hub" / ("models--" + item.repo.replace("/", "--")) / "blobs"
+    total = 0
+    try:
+        for f in blobs.iterdir():
+            try:
+                total += f.stat().st_size
+            except OSError:
+                pass
+    except OSError:
+        pass
+    return total
+
+
+def _required_bytes(pending: list[Item]) -> int:
+    """Bytes still to fetch for the not-yet-cached items, excluding what is
+    already on disk. Falls back to ESTIMATED_TOTAL_BYTES if sizes are unknown."""
+    if pending and all(i.total > 0 for i in pending):
+        return sum(max(0, i.total - _present_bytes(i)) for i in pending)
+    return max(0, ESTIMATED_TOTAL_BYTES - sum(_present_bytes(i) for i in _items))
+
+
+def _check_disk(pending: list[Item]) -> bool:
+    """True if there is room; otherwise records _disk and returns False."""
+    global _disk
+    models = paths.models_dir()
+    models.mkdir(parents=True, exist_ok=True)
+    required = _required_bytes(pending) + DISK_SAFETY_MARGIN
+    free = shutil.disk_usage(models).free
+    with _lock:
+        if free < required:
+            _disk = {"required_bytes": required, "free_bytes": free, "path": str(models)}
+            return False
+        _disk = None
+    return True
+
+
 def _download_item(item: Item) -> None:
     """Fetch one item. Module-level so tests can replace it."""
     global _current
@@ -243,6 +294,26 @@ def _download_item(item: Item) -> None:
 def _run() -> None:
     global _state, _error
     try:
+        pending: list[Item] = []
+        for item in _items:
+            if item.state == "done":
+                continue
+            if _cached(item):
+                with _lock:
+                    if not item.total:
+                        item.total = 1
+                    item.state = "done"
+                continue
+            if not item.files:
+                try:
+                    _measure(item)
+                except Exception:  # noqa: BLE001 — offline: disk check uses the static estimate
+                    pass
+            pending.append(item)
+        if pending and not _check_disk(pending):
+            with _lock:
+                _state = "insufficient_disk"
+            return
         for item in _items:
             if item.state == "done":
                 continue
@@ -281,13 +352,14 @@ def _run() -> None:
 
 
 def _start_thread() -> None:
-    global _thread, _state, _error, _pause_requested
+    global _thread, _state, _error, _pause_requested, _disk
     with _lock:
         if _thread is not None and _thread.is_alive():
             return
         _pause_requested = False
         _state = "downloading"
         _error = None
+        _disk = None
         for i in _items:
             if i.state == "error":
                 i.state = "pending"
@@ -302,7 +374,7 @@ def start() -> None:
     with _lock:
         if not _items:
             _items.extend(build_items(_use_fp16()))
-        if _state in ("idle", "error"):
+        if _state in ("idle", "error", "insufficient_disk"):
             _start_thread()
 
 
@@ -315,7 +387,7 @@ def pause() -> None:
 
 def resume() -> None:
     with _lock:
-        if _state not in ("paused", "error"):
+        if _state not in ("paused", "error", "insufficient_disk"):
             return
         t = _thread
     if t is not None:

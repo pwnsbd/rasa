@@ -14,6 +14,10 @@ function fmtBytes(n: number): string {
   return `${Math.round(n / 1e3)} KB`;
 }
 
+function fmtGb(n: number): string {
+  return `${(n / 1e9).toFixed(1)} GB`;
+}
+
 function fmtEta(s: number | null): string {
   if (s == null) return '';
   if (s < 90) return `${Math.round(s)}s left`;
@@ -55,7 +59,8 @@ export default function DownloadButton() {
   if (!st || st.state === 'ready' || st.state === 'idle') return null;
 
   const pct = st.total_bytes ? Math.min(1, st.downloaded_bytes / st.total_bytes) : 0;
-  const isError = st.state === 'error';
+  const isDisk = st.state === 'insufficient_disk';
+  const isError = st.state === 'error' || isDisk;
   const isPaused = st.state === 'paused';
   const R = 10;
   const C = 2 * Math.PI * R;
@@ -70,7 +75,7 @@ export default function DownloadButton() {
     <div ref={rootRef} className="fixed top-3 right-4 z-[60]">
       <button
         onClick={() => setOpen((o) => !o)}
-        title={isError ? 'Download failed' : isPaused ? 'Downloads paused' : `Downloading models… ${Math.round(pct * 100)}%`}
+        title={isDisk ? 'Not enough disk space' : isError ? 'Download failed' : isPaused ? 'Downloads paused' : `Downloading models… ${Math.round(pct * 100)}%`}
         className={`relative w-9 h-9 rounded-full bg-charcoal/95 border flex items-center justify-center hover:bg-charcoal ${
           isError ? 'border-red-500/50 text-red-300' : 'border-white/10 text-gold'
         }`}
@@ -95,7 +100,8 @@ export default function DownloadButton() {
             <div className="h-full bg-gold transition-all" style={{ width: `${pct * 100}%` }} />
           </div>
           <p className="mb-3">
-            {isError ? `Failed: ${st.error}` :
+            {isDisk ? `Not enough disk space: Rasa needs about ${fmtGb(st.required_bytes ?? 0)} free on ${st.path} to download its models (${fmtGb(st.free_bytes ?? 0)} free). Free up space, then press Download again.` :
+              isError ? `Failed: ${st.error}` :
               isPaused ? 'Paused' :
               `${fmtBytes(st.speed_bps)}/s ${fmtEta(st.eta_seconds)}`}
           </p>
@@ -125,7 +131,7 @@ export default function DownloadButton() {
               <button disabled={busy} onClick={() => act(api.pauseDownloads)} className="shrink-0 rounded-lg border border-white/15 px-3 py-1 text-ink hover:bg-white/5">Pause</button>
             )}
             {(isPaused || isError) && (
-              <button disabled={busy} onClick={() => act(api.resumeDownloads)} className="shrink-0 rounded-lg bg-gold px-3 py-1 text-dusk">{isError ? 'Retry' : 'Resume'}</button>
+              <button disabled={busy} onClick={() => act(api.resumeDownloads)} className="shrink-0 rounded-lg bg-gold px-3 py-1 text-dusk">{isDisk ? 'Download' : isError ? 'Retry' : 'Resume'}</button>
             )}
           </div>
         </div>

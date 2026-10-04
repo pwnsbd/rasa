@@ -138,8 +138,12 @@ export interface DownloadItem {
 }
 
 export interface DownloadStatus {
-  state: 'idle' | 'downloading' | 'paused' | 'ready' | 'error';
+  state: 'idle' | 'downloading' | 'paused' | 'ready' | 'error' | 'insufficient_disk';
   error: string | null;
+  // Set only while state === 'insufficient_disk'.
+  required_bytes: number | null;
+  free_bytes: number | null;
+  path: string | null;
   total_bytes: number;
   downloaded_bytes: number;
   speed_bps: number;
