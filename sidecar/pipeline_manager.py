@@ -106,22 +106,34 @@ def cached_prompt_embeds() -> dict | None:
     return _prompt_embeds
 
 
+_encoder_depth = 0  # nesting count for image_encoder_on_compute (one move per outermost use)
+
+
 @contextlib.contextmanager
 def image_encoder_on_compute(pipe):
-    """In resident mode the CLIP image encoder lives on CPU; move it to the
-    compute device only while embedding, then back. No-op otherwise."""
-    enc = getattr(pipe, "image_encoder", None)
-    if _status.get("memory_plan") != "resident" or enc is None:
-        yield
-        return
+    """In resident mode the CLIP image encoder (~3.4GB) lives on CPU; move it
+    to the compute device only while embedding, then back. Reentrant: nested
+    uses (e.g. per-crop calls inside a multi-crop extraction) move it once.
+
+    Always runs under no_grad: an embedding computed with grad enabled keeps
+    the autograd graph — and through it the GPU copy of the encoder weights —
+    alive after the move back to CPU, leaking ~3.4GB per call."""
+    global _encoder_depth
     import torch
 
-    enc.to(compute_device())
+    enc = getattr(pipe, "image_encoder", None)
+    move = _status.get("memory_plan") == "resident" and enc is not None and _encoder_depth == 0
+    if move:
+        enc.to(compute_device())
+    _encoder_depth += 1
     try:
-        yield
+        with torch.no_grad():
+            yield
     finally:
-        enc.to("cpu")
-        torch.cuda.empty_cache()
+        _encoder_depth -= 1
+        if move:
+            enc.to("cpu")
+            torch.cuda.empty_cache()
 
 
 def _cache_prompt_embeds(pipe, resident: bool) -> None:

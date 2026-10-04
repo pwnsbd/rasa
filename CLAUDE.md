@@ -31,3 +31,4 @@
 - Worktrees don't have `sidecar/venv` or `node_modules`; use the main checkout's venv python by absolute path ?
 - Visual quality (texture, stroke, relight look) is judged by Pawan in the running app, never by an agent.
 - 2026-10-03 — "Follow scene" overlay was fully built + tested before Pawan saw it, then rejected on look → for any new visual effect, get Pawan to eyeball a quick prototype on a real photo before writing tests/UI polish.
+- 2026-10-04 — resident-mode distill OOM'd (25GB): image encoder embedded under grad, autograd graph pinned its GPU copy after moving back to CPU; stub tests couldn't see it → any change to model device placement gets a Conductor GPU run of BOTH apply and essence extraction (watch torch.cuda.memory_allocated per stage) before telling Pawan it's done.

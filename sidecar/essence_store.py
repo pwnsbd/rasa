@@ -213,7 +213,7 @@ def extract_ip_adapter_embedding(pipe, image: Image.Image):
             num_images_per_prompt=1,
             do_classifier_free_guidance=True,
         )
-    return embeds[0]
+    return embeds[0].detach()
 
 
 def _sample_crops(image: Image.Image, count: int, seed: int = CROP_SEED) -> list[Image.Image]:
@@ -283,9 +283,10 @@ def _extract_purified_embedding(pipe, image: Image.Image):
     Essence (an already-saved Essence loaded as a blend ingredient skips
     this — it was purified once already, at its own distillation time).
     """
-    samples = [extract_ip_adapter_embedding(pipe, image)]
-    for crop in _sample_crops(image, NUM_PURIFICATION_CROPS):
-        samples.append(extract_ip_adapter_embedding(pipe, crop))
+    with pipeline_manager.image_encoder_on_compute(pipe):  # one encoder move for all samples
+        samples = [extract_ip_adapter_embedding(pipe, image)]
+        for crop in _sample_crops(image, NUM_PURIFICATION_CROPS):
+            samples.append(extract_ip_adapter_embedding(pipe, crop))
     return _purify_embedding(samples)
 
 

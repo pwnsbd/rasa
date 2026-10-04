@@ -177,3 +177,34 @@ def test_resident_cache_failure_degrades_to_offload(monkeypatch):
 def test_non_resident_cache_failure_keeps_plan(monkeypatch):
     monkeypatch.setattr(pipeline_manager, "_cache_prompt_embeds", _boom)
     assert pipeline_manager._cache_or_degrade(object(), "offload")[1] == "offload"
+
+
+def test_image_encoder_context_is_reentrant_and_gradless(monkeypatch):
+    # Regression: per-crop embedding under grad kept the encoder's GPU copy
+    # alive after moving back to CPU (~3.4GB leaked per crop -> OOM while
+    # distilling). The context must move once per outermost use and disable grad.
+    import torch
+    import pipeline_manager as pm
+
+    moves = []
+
+    class Enc(torch.nn.Linear):
+        def to(self, *args, **kwargs):
+            moves.append(str(args[0]))
+            return self
+
+    class Pipe:
+        image_encoder = Enc(2, 2)
+
+    monkeypatch.setitem(pm._status, "memory_plan", "resident")
+    monkeypatch.setattr(pm, "compute_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    pipe = Pipe()
+    with pm.image_encoder_on_compute(pipe):
+        for _ in range(3):
+            with pm.image_encoder_on_compute(pipe):
+                assert not torch.is_grad_enabled()
+                out = pipe.image_encoder(torch.ones(1, 2))
+                assert out.grad_fn is None
+    assert moves == ["cpu", "cpu"]  # one move to compute + one back, not one per crop
+    assert pm._encoder_depth == 0
