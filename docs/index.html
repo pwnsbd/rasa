@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rasa — Pour a painting's style onto your photos</title>
+<meta name="description" content="Rasa is a local-first Windows app that distills the visual style of any reference image into an Essence and pours it onto your own photos, on your own GPU.">
+<meta property="og:title" content="Rasa — Pour a painting's style onto your photos">
+<meta property="og:description" content="Distill the style of any image into an Essence, then drop it onto your photos. Runs locally on your NVIDIA GPU.">
+<meta property="og:image" content="assets/result-temple-vangogh.jpg">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="assets/favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --dusk: #2b2233;
+    --charcoal: #241c2b;
+    --surface: #372c42;
+    --ink: #f3ede9;
+    --ink-soft: #b8aec2;
+    --gold: #c9a35c;
+    --line: rgba(255, 255, 255, 0.09);
+    --radius: 14px;
+    --max: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--charcoal);
+    color: var(--ink);
+    font: 16px/1.6 Inter, system-ui, sans-serif;
+  }
+  img, video { display: block; max-width: 100%; }
+  a { color: var(--gold); }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 16px; }
+
+  /* Hero */
+  header.hero {
+    background: radial-gradient(1200px 500px at 50% -10%, #4a3a5a 0%, var(--dusk) 45%, var(--charcoal) 100%);
+    padding: 72px 0 40px;
+    text-align: center;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink-soft); font-size: 14px; letter-spacing: .08em; text-transform: uppercase; }
+  .brand img { width: 28px; height: 28px; border-radius: 7px; }
+  h1 {
+    font: 600 clamp(36px, 6vw, 64px)/1.08 Fraunces, Georgia, serif;
+    margin: 18px auto 14px;
+    max-width: 16ch;
+    letter-spacing: -0.01em;
+  }
+  h1 em { font-style: normal; color: var(--gold); }
+  .lede { color: var(--ink-soft); font-size: clamp(16px, 2.2vw, 19px); max-width: 60ch; margin: 0 auto 28px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 20px; border-radius: 999px; font-weight: 600; text-decoration: none;
+    border: 1px solid var(--line); color: var(--ink); background: var(--surface);
+  }
+  .btn.primary { background: var(--gold); color: #241c2b; border-color: var(--gold); }
+  .btn:hover { filter: brightness(1.08); }
+  .fine { color: var(--ink-soft); font-size: 13px; margin-top: 12px; }
+
+  .demo {
+    margin: 44px auto 0; max-width: 980px;
+    border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .45);
+    background: #000;
+  }
+  .demo video { width: 100%; height: auto; }
+
+  section { padding: 64px 0; }
+  section + section { border-top: 1px solid var(--line); }
+  h2 { font: 600 clamp(26px, 3.6vw, 36px)/1.15 Fraunces, Georgia, serif; margin: 0 0 10px; }
+  .sub { color: var(--ink-soft); margin: 0 0 32px; max-width: 62ch; }
+
+  /* How it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; counter-reset: s; }
+  .step { background: var(--dusk); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+  .step::before {
+    counter-increment: s; content: counter(s);
+    display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%;
+    background: rgba(201, 163, 92, .15); color: var(--gold); font-weight: 600; margin-bottom: 12px;
+  }
+  .step h3 { margin: 0 0 6px; font-size: 17px; }
+  .step p { margin: 0; color: var(--ink-soft); font-size: 15px; }
+
+  /* Examples: reference + photo -> result */
+  .example { display: grid; grid-template-columns: 0.55fr 1fr auto 1.35fr; gap: 14px; align-items: center; margin-bottom: 40px; }
+  .example:last-child { margin-bottom: 0; }
+  figure { margin: 0; }
+  figure .frame { border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--dusk); }
+  figure img { width: 100%; height: auto; }
+  figcaption { font-size: 12.5px; color: var(--ink-soft); margin-top: 8px; letter-spacing: .02em; }
+  figcaption b { color: var(--ink); font-weight: 500; }
+  .ref .frame { aspect-ratio: 1 / 1; }
+  .ref img { width: 100%; height: 100%; object-fit: cover; }
+  .result .frame { box-shadow: 0 18px 40px rgba(0, 0, 0, .35); border-color: rgba(201, 163, 92, .35); }
+  .arrow { color: var(--gold); font-size: 26px; line-height: 1; padding: 0 2px; }
+  .plus { display: none; }
+  .callout {
+    display: inline-block; font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--gold); border: 1px solid rgba(201, 163, 92, .4); border-radius: 999px; padding: 4px 10px; margin: 0 0 14px;
+  }
+
+  /* Specs */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card { background: var(--dusk); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; }
+  .card h3 { margin: 0 0 12px; font-size: 17px; }
+  .card ul { margin: 0; padding-left: 18px; color: var(--ink-soft); }
+  .card li { margin: 6px 0; }
+  .card li b { color: var(--ink); font-weight: 500; }
+  .stat { display: flex; gap: 28px; flex-wrap: wrap; margin-top: 18px; }
+  .stat div { font: 600 30px/1 Fraunces, Georgia, serif; color: var(--gold); }
+  .stat span { display: block; font: 13px/1.4 Inter, sans-serif; color: var(--ink-soft); margin-top: 6px; }
+
+  footer { padding: 36px 0 56px; color: var(--ink-soft); font-size: 13.5px; border-top: 1px solid var(--line); }
+  footer p { margin: 6px 0; }
+
+  @media (max-width: 860px) {
+    .steps, .grid2 { grid-template-columns: 1fr; }
+    .example { grid-template-columns: 1fr 1fr; }
+    .example .result { grid-column: 1 / -1; }
+    .arrow { display: none; }
+  }
+  @media (max-width: 420px) {
+    header.hero { padding-top: 48px; }
+    .example { grid-template-columns: 0.7fr 1fr; gap: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .demo video { animation: none; } }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="brand"><img src="assets/favicon.png" alt="">Rasa</div>
+    <h1>Pour a painting's <em>style</em> onto your photos</h1>
+    <p class="lede">Drop in any reference image and Rasa distills its look into an <b>Essence</b>: brushwork, palette, texture. Drag that Essence onto your own photo and watch it transform, while the scene keeps its shape. Everything runs on your own GPU.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/pwnsbd/rasa/releases/latest">Download for Windows</a>
+      <a class="btn" href="https://github.com/pwnsbd/rasa">View on GitHub</a>
+    </div>
+    <p class="fine">Free · Windows 10/11 · NVIDIA GPU · nothing leaves your machine</p>
+
+    <div class="demo">
+      <video src="assets/demo.mp4" poster="assets/demo-poster.jpg" autoplay muted loop playsinline controls preload="metadata" aria-label="Screen recording: distilling a Van Gogh essence and pouring it onto a night photo of a pagoda"></video>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="sub">No prompts, no sliders full of jargon. Three moves.</p>
+    <div class="steps">
+      <div class="step"><h3>Distill</h3><p>Drop a painting, print or texture into the Distillation Room. Rasa extracts its style into a reusable Essence bottle.</p></div>
+      <div class="step"><h3>Pour</h3><p>Pick a photo and drag the bottle onto it. Live progress shows each step; a restyle takes about 15 seconds on a laptop GPU.</p></div>
+      <div class="step"><h3>Keep</h3><p>Every creation lands in your Media page, ready to save, compare, or turn into a relit animation.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Real photos, real results</h2>
+    <p class="sub">Night shots taken on a phone. Each row: the style reference, the original photo, and what Rasa made of it. No retouching.</p>
+
+    <div class="example">
+      <figure class="ref"><div class="frame"><img src="assets/ref-vangogh.jpg" alt="Van Gogh, Wheat Field with Cypresses" loading="lazy"></div><figcaption><b>Essence</b> · Van Gogh</figcaption></figure>
+      <figure><div class="frame"><img src="assets/photo-pagoda.jpg" alt="Original night photo of a five-tiered pagoda" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure class="result"><div class="frame"><img src="assets/result-pagoda-vangogh.jpg" alt="The pagoda photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result</figcaption></figure>
+    </div>
+
+    <div class="example">
+      <figure class="ref"><div class="frame"><img src="assets/ref-vangogh.jpg" alt="Van Gogh, Wheat Field with Cypresses" loading="lazy"></div><figcaption><b>Essence</b> · Van Gogh</figcaption></figure>
+      <figure><div class="frame"><img src="assets/photo-temple.jpg" alt="Original night photo of a stone temple" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure class="result"><div class="frame"><img src="assets/result-temple-vangogh.jpg" alt="The temple photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result</figcaption></figure>
+    </div>
+
+    <p class="callout">One photo, two Essences</p>
+    <div class="example">
+      <figure class="ref"><div class="frame"><img src="assets/ref-vangogh.jpg" alt="Van Gogh, Wheat Field with Cypresses" loading="lazy"></div><figcaption><b>Essence</b> · Van Gogh</figcaption></figure>
+      <figure><div class="frame"><img src="assets/photo-street.jpg" alt="Original night photo of a person on a lit street" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure class="result"><div class="frame"><img src="assets/result-street-vangogh.jpg" alt="The street photo restyled with Van Gogh brushwork" loading="lazy"></div><figcaption><b>Rasa</b> result · painterly</figcaption></figure>
+    </div>
+    <div class="example">
+      <figure class="ref"><div class="frame"><img src="assets/ref-leonardo.jpg" alt="Renaissance engraving of Leonardo da Vinci" loading="lazy"></div><figcaption><b>Essence</b> · Renaissance engraving</figcaption></figure>
+      <figure><div class="frame"><img src="assets/photo-street.jpg" alt="Original night photo of a person on a lit street" loading="lazy"></div><figcaption><b>Original</b> photo</figcaption></figure>
+      <div class="arrow" aria-hidden="true">→</div>
+      <figure class="result"><div class="frame"><img src="assets/result-street-leonardo.jpg" alt="The street photo restyled as a hatched engraving" loading="lazy"></div><figcaption><b>Rasa</b> result · engraved</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2>Under the hood</h2>
+    <p class="sub">A desktop app with a local Python engine. Your photos never leave your computer.</p>
+    <div class="grid2">
+      <div class="card">
+        <h3>The pipeline</h3>
+        <ul>
+          <li><b>SDXL</b> image-to-image with <b>InstantStyle</b> (IP-Adapter), which carries style while leaving layout alone</li>
+          <li><b>Tile ControlNet</b> keeps your photo's structure: faces, buildings, horizon</li>
+          <li>Multi-crop "purification" so an Essence captures style, not the reference's subject</li>
+          <li>Adapts to your GPU: keeps models resident when memory allows, offloads when it doesn't</li>
+        </ul>
+        <div class="stat">
+          <div>~15s<span>per restyle, RTX 5070 Ti laptop</span></div>
+          <div>~11s<span>to distill an Essence</span></div>
+          <div>0<span>uploads, all local</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>What you need</h3>
+        <ul>
+          <li><b>Windows 10 or 11</b>, 64-bit</li>
+          <li><b>NVIDIA GPU</b>; tested on 12 GB VRAM. Smaller cards run in a slower low-memory mode</li>
+          <li><b>16 GB RAM</b> minimum, 32 GB recommended</li>
+          <li><b>~15 GB free disk</b>; models (~11.5 GB) download once on first launch</li>
+          <li>The installer isn't code-signed yet. If Windows SmartScreen appears, choose <b>More info → Run anyway</b></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Built by <a href="https://github.com/pwnsbd">Pawan Subedi</a>. Source and releases at <a href="https://github.com/pwnsbd/rasa">github.com/pwnsbd/rasa</a>.</p>
+    <p>Style references are public-domain artworks: Vincent van Gogh, <i>Wheat Field with Cypresses</i> (1889), and a Renaissance-era engraving of Leonardo da Vinci. Model licenses are listed in <a href="https://github.com/pwnsbd/rasa/blob/main/THIRD_PARTY_LICENSES.md">THIRD_PARTY_LICENSES.md</a>.</p>
+  </div>
+</footer>
+
+</body>
+</html>
